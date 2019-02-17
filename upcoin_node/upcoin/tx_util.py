@@ -33,7 +33,7 @@ def _process_outputs(outputs, timestamp):
             raise InvalidAmounts("Output can't be zero or negative")
         total_out += _cut_to_8(amount)
         outs.append("%s,%s" % (address, amount))
-        if not is_address(address):
+        if not is_address(address) or not address.startswith("1"):
             raise InvalidAddress("Invalid address: %s" % address)
 
     outs.append(timestamp)
@@ -99,63 +99,68 @@ def validate_transaction(tx, min_fee=0.01):
 
 if __name__ == '__main__':
 
+    def assert_raises(call, exception, msg):
+        try:
+            call()
+        except exception:
+            return
+        assert False, msg
+
     # testing make_transaction makes a valid transaction
     i = [
         ['18pvhMkv1MZbZZEncKucAmVDLXZsD9Dhk6', 3.2, 'KwuVvv359oft9TfzyYLAQBgpPyCFpcTSrV9ZgJF9jKdT8jd7XLH2'],
         ['14ZiHtrmT6Mi4RT2Liz51WKZMeyq2n5tgG', 0.5, 'KxWoW9Pj45UzUH1d5p3wPe7zxbdJqU7HHkDQF1YQS1AiQg9qeZ9H']
     ]
     o = [['16ViwyAVeKtz4vbTXWRSYgadT5w3Rj3yuq', 2.2],['18pPTxvTc9rJZfD2tM1bNYHFhAcZjgqEdQ', 1.4]]
-    assert validate_transaction(make_transaction(i, o))
+    assert validate_transaction(make_transaction(i, o)), "Basic transaction creation fails"
 
     # testing invalid signature fails
-    fail = 0
     bad_sig = make_transaction(i, o)
     bad_sig['inputs'][0][2] = "23784623kjhdfkjashdfkj837242387"
-    try:
-        validate_transaction(bad_sig)
-    except InvalidSignature:
-        fail += 1
-    assert fail == 1, "Invalid Signature not happening when sig is edited"
+    assert_raises(
+        lambda: validate_transaction(bad_sig), InvalidSignature,
+        "Invalid Signature not happening when sig is edited"
+    )
 
     # testing changing values within already made transaction fails validation
-    fail = 0
-    bad_sig = make_transaction(i, o)
-    bad_sig['inputs'][0][1] = 0.2
-    try:
-        validate_transaction(bad_sig)
-    except InvalidSignature:
-        fail += 1
-    assert fail == 1, "Invalid Signature not happening when amount is changed"
+    bad_tx = make_transaction(i, o)
+    bad_tx['inputs'][0][1] = 0.2
+    assert_raises(
+        lambda: validate_transaction(bad_tx), InvalidSignature,
+        "Invalid Signature not happening when amount is changed"
+    )
 
     # testing make_transaction fails when you make a tx with more outputs than inputs
-    fail = 0
-    bad_o = [['16ViwyAVeKtz4vbTXWRSYgadT5w3Rj3yuq', 2.2],['18pPTxvTc9rJZfD2tM1bNYHFhAcZjgqEdQ', 9.4]]
-    try:
-        make_transaction(i, bad_o)
-    except InvalidAmounts:
-        fail += 1
-    assert fail == 1, "Invalid Amount not happening when outputs exceed inputs when making new trasnaction"
+    bad_o = [
+        ['16ViwyAVeKtz4vbTXWRSYgadT5w3Rj3yuq', 2.2],
+        ['18pPTxvTc9rJZfD2tM1bNYHFhAcZjgqEdQ', 9.4]
+    ]
+    assert_raises(
+        lambda: make_transaction(i, bad_o), InvalidAmounts,
+        "Invalid Amount not happening when outputs exceed inputs when making new trasnaction"
+    )
 
     # testing make_transaction fails when you add a zero input
-    fail = 0
-    bad_o = [['16ViwyAVeKtz4vbTXWRSYgadT5w3Rj3yuq', 0],['18pPTxvTc9rJZfD2tM1bNYHFhAcZjgqEdQ', 9.4]]
-    try:
-        make_transaction(i, bad_o)
-    except InvalidAmounts:
-        fail += 1
-    assert fail == 1, "Invalid Amount not happening when zero input is tried"
+    bad_o = [
+        ['16ViwyAVeKtz4vbTXWRSYgadT5w3Rj3yuq', 0],
+        ['18pPTxvTc9rJZfD2tM1bNYHFhAcZjgqEdQ', 9.4]
+    ]
+    assert_raises(
+        lambda: make_transaction(i, bad_o), InvalidAmounts,
+        "Invalid Amount not happening when zero input is tried"
+    )
 
     # testing make_transaction fails when you add a negative input
-    fail = 0
-    bad_o = [['16ViwyAVeKtz4vbTXWRSYgadT5w3Rj3yuq', -42.07],['18pPTxvTc9rJZfD2tM1bNYHFhAcZjgqEdQ', 9.4]]
-    try:
-        make_transaction(i, bad_o)
-    except InvalidAmounts:
-        fail += 1
-    assert fail == 1, "Invalid Amount not happening when negative input is tried"
+    bad_o = [
+        ['16ViwyAVeKtz4vbTXWRSYgadT5w3Rj3yuq', -42.07],
+        ['18pPTxvTc9rJZfD2tM1bNYHFhAcZjgqEdQ', 9.4]
+    ]
+    assert_raises(
+        lambda: make_transaction(i, bad_o), InvalidAmounts,
+        "Invalid Amount not happening when negative input is tried on transaction creation"
+    )
 
     # testing transaction with valid signatures, but invalid amounts are caught as invalid
-    fail = 0
     bad_tx = {
         'inputs': [
             ['18pvhMkv1MZbZZEncKucAmVDLXZsD9Dhk6',3.2,'ILgSi/FsQX2pL5MPoqxvVOAk5o8Njl7a8+ruXXXgU4UIfMyYXx+yytSevMD55ZNceC+1ReVWZgXuFu8iUtOkz2k='],
@@ -167,15 +172,12 @@ if __name__ == '__main__':
         ],
         'timestamp': '2019-02-13T19:14:27.882253'
     }
-
-    try:
-        validate_transaction(bad_tx)
-    except InvalidAmounts:
-        fail += 1
-    assert fail == 1, "Invalid Amount not happening when outputs exceed inputs when validating"
+    assert_raises(
+        lambda: validate_transaction(bad_tx), InvalidAmounts,
+        "Invalid Amount not happening when outputs exceed inputs when validating"
+    )
 
     # valid signatures, but negative amounts
-    fail = 0
     bad_tx = {
         'inputs': [
             ['18pvhMkv1MZbZZEncKucAmVDLXZsD9Dhk6',3.2,'H/vTjUELpBg7uB08QOprZCxkbnZTMefq5VJqgZPzzpLtFeBKClAFEPhzYtYQl5tcK6oq0V+GqIrE8dPUR2teLSg='],
@@ -187,28 +189,35 @@ if __name__ == '__main__':
         ],
         'timestamp': '2019-02-13T19:47:07.354060'
     }
-    try:
-        validate_transaction(bad_tx)
-    except InvalidAmounts:
-        fail += 1
-    assert fail == 1, "Invalid Amount not happening when outputs is negative when validating"
+    assert_raises(
+        lambda: validate_transaction(bad_tx), InvalidAmounts,
+        "Invalid Amount not happening when outputs is negative when validating"
+    )
 
-    fail = 0
+    # testing that a transaction made with a valid signature but invalid address is caught
     bad_tx = {
         'inputs': [
-            ['18pvhMkv1MZbZZEnc6ucAmVDLXZsD9Dhk6',3.2,'H/vTjUELpBg7uB08QOprZCxkbnZTMefq5VJqgZPzzpLtFeBKClAFEPhzYtYQl5tcK6oq0V+GqIrE8dPUR2teLSg='],
-            ['14ZiHtrmT6Mi4RT2Liz51WKZMeyq2n5tgG',0.5,'H5qfLufve25jEf8H2qydWKPG9haSgrFfNYct0G9pmqDZeq1fM1fdZzoMJ8e2H9YMVr6t9wpgJpYwEoWA4I4gJl8=']
-        ],
+            ['18pvhMkv1MZbZZEncKucAmVDLXZsD9Dhk6',3.2,'IGFbFxYvnBuYh/b5f6C7BeM8hYABOY/yTON0aEKV0XyPZgkmVkdKrqS/a+4p5tiIC1N4R1y3CyR3fydhWc/WDyc='],
+            ['14ZiHtrmT6Mi4RT2Liz51WKZMeyq2n5tgG',0.5,'IF8niJ+u11k3H/JUTWt3dRlmZ8v3Ou8gfwHuuLRPlUHGSc4O2TxgULqBGaQO1BcaAMW/zk89f85se3Rcq+guQNc=']],
         'outputs': [
-            ['18pPTxvTc9rJZfD2tM1bNYHFhAcZjgqEdQ', 0.4],
-            ['16ViwyAVeKtz4vbTXWRSYgadT5w3Rj3yuq', 2.2]
+            ['YYY', 2.2], ['XXX', 1.4]
         ],
-        'timestamp': '2019-02-13T19:47:07.354060'
+        'timestamp': '2019-02-17T12:02:41.843542'
     }
-    try:
-        validate_transaction(bad_tx)
-    except InvalidAddress:
-        fail += 1
-    assert fail == 1, "Invalid address not being caught."
+    assert_raises(
+        lambda: validate_transaction(bad_tx), InvalidAddress,
+        "Invalid address not being caught."
+    )
+
+    # testing make_transaction fails on trying to use a "3" address
+    i = [
+        ['18pvhMkv1MZbZZEncKucAmVDLXZsD9Dhk6', 3.2, 'KwuVvv359oft9TfzyYLAQBgpPyCFpcTSrV9ZgJF9jKdT8jd7XLH2'],
+        ['14ZiHtrmT6Mi4RT2Liz51WKZMeyq2n5tgG', 0.5, 'KxWoW9Pj45UzUH1d5p3wPe7zxbdJqU7HHkDQF1YQS1AiQg9qeZ9H']
+    ]
+    o = [['3J98t1WpEZ73CNmQviecrnyiWrnqRhWNLy', 2.2]]
+    assert_raises(
+        lambda: make_transaction(i, o), InvalidAddress,
+        "3 addresses not caught as invalid"
+    )
 
     print("all tests pass")
