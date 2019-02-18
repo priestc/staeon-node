@@ -38,7 +38,7 @@ class LedgerEntry(models.Model):
         ledgers = LedgerEntry.objects.filter(
             last_updated__lte=epoch_end,
             last_updated__gte=epoch_start,
-        ).order_by()
+        ).order_by('last_updated', 'address')
         return hashlib.sha256("".join([
             "%s%.8f" % (x.address, x.amount) for x in ledgers
         ]) + str(epoch)).hexdigest()
