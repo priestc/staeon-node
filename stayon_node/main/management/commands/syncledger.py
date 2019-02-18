@@ -3,7 +3,7 @@ import requests
 
 import dateutil.parser
 from django.core.management.base import BaseCommand, CommandError
-from upcoin.models import Peer, LedgerEntry
+from stayon.models import Peer, LedgerEntry
 
 def update(response):
     j = response.json()
@@ -32,7 +32,7 @@ class Command(BaseCommand):
 
         peers = Peer.objects.all().order_by("?")
         for peer in peers:
-            url = "https://%s/upcoin/sync?start=%s" % (
+            url = "https://%s/stayon/sync?start=%s" % (
                 peer.domain, last_update, page
             )
             print url

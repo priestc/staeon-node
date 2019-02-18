@@ -34,9 +34,15 @@ def validate_peer_registration(reg):
     return True
 
 if __name__ == '__main__':
+    def assert_raises(call, exception, msg):
+        try:
+            call()
+        except exception:
+            return
+        assert False, msg
+
     pk = 'KwuVvv359oft9TfzyYLAQBgpPyCFpcTSrV9ZgJF9jKdT8jd7XLH2'
-    reg = register_peer(pk, 'example.com')
-    assert validate_peer_registration(reg)
+    assert validate_peer_registration(register_peer(pk, 'example.com'))
 
     bad_reg = {
         'payout_address': '18pvhMkv1MZbZZEncKucAmVDLXZsD9Dhk6',
@@ -44,9 +50,7 @@ if __name__ == '__main__':
         'signature': 'IDZKaA/TUds7wYy69tW3BcqR87m2AIqgoQlxesDEMfhEclhn4Mcc+8fhZMg3fepGt++UJZvWlZSZLIrscSshmtw=',
         'timestamp': '2019-02-14T13:06:04.835896'
     }
-    fail = 0
-    try:
-        validate_peer_registration(bad_reg)
-    except InvalidSignature:
-        fail += 1
-    assert fail == 1, "Invalid peer registration sign not being caught"
+    assert_raises(
+        lambda: validate_peer_registration(bad_reg), InvalidSignature:
+        "Invalid peer registration sig not being caught"
+    )

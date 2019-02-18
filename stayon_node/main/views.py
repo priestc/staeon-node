@@ -123,4 +123,4 @@ def sync(request):
 
 def network_summary(request):
     peers = Peer.objects.all()
-    return render(request, "upcoin_summary.html", locals())
+    return render(request, "stayon_summary.html", locals())

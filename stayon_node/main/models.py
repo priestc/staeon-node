@@ -1,10 +1,12 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 import itertools
+import os
 import hashlib
 import datetime
 
 from django.db import models
+from django.conf import settings
 
 genesis = datetime.datetime(2019, 2, 14, 10, 0)
 
@@ -59,6 +61,12 @@ class Peer(models.Model):
 
     def rank(self):
         return Peer.objects.filter(reputation__gt=self.reputation).count()
+
+    @classmethod
+    def my_node(cls):
+        config = open(os.path.join(settings.BASE_DIR, "../node.conf")).readlines()
+        my_domain = config[0]
+        return cls.objects.get(domain=domain)
 
 
 class EpochTransactions(models.Model):

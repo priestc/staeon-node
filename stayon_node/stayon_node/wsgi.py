@@ -1,5 +1,5 @@
 """
-WSGI config for upcoin_node project.
+WSGI config for stayon_node project.
 
 It exposes the WSGI callable as a module-level variable named ``application``.
 
@@ -11,6 +11,6 @@ import os
 
 from django.core.wsgi import get_wsgi_application
 
-os.environ.setdefault("DJANGO_SETTINGS_MODULE", "upcoin_node.settings")
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "stayon_node.settings")
 
 application = get_wsgi_application()
