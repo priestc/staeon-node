@@ -111,8 +111,34 @@ def add_peer(request):
 
     return HttpResponse("OK")
 
-def ping(request):
-    pass
+def accept_push(request):
+    """
+    During the consensus process, other nodes will push their ledger hash and
+    this view will accept it.
+    """
+    claimed_ledger_hash = request.POST['ledger_hash']
+    signature = request.POST['signature']
+    domain = request.POST['domain']
+    peer = Peer.objects.get(domain=domain)
+
+    valid = validate_ledger_hash_push(
+        peer.payout_address, claimed_ledger_hash, domain, signature
+    )
+    if valid:
+        pass
+
+    return HttpResponse("OK")
+
+def return_pull(request):
+    """
+    Some nodes will request my ledger hash during the consensus process.
+    This view returns that ledger hash. Signing this response is not necessary
+    because it is being served via HTTPS.
+    """
+    return JsonResponse({
+        'ledger_hash': get_latest_hash(),
+    })
+
 
 def sync(request):
     start = dateutil.parser.parse(request.GET['start'])

@@ -54,19 +54,26 @@ class Peer(models.Model):
         return self.domain
 
     @classmethod
-    def shuffle(cls, hash, n=0):
-        peers = list(cls.objects.all().order_by('reputation'))
-        sorter = lambda x: hashlib.sha256(x.domain + hash + n).hexdigest()
+    def shuffle(cls, peers, hash, n=0):
+        sorter = lambda x: hashlib.sha256(x.domain + hash + str(n)).hexdigest()
         return sorted(peers, key=sorter)
 
     def rank(self):
-        return Peer.objects.filter(reputation__gt=self.reputation).count()
+        return Peer.objects.filter(
+            models.Q(reputation__gt=self.reputation) |
+            (models.Q(reputation=self.reputation) &
+            models.Q(first_registered__lt=self.first_registered))
+        ).count()
 
     @classmethod
     def my_node(cls):
         config = open(os.path.join(settings.BASE_DIR, "../node.conf")).readlines()
-        my_domain = config[0]
-        return cls.objects.get(domain=domain)
+        my_domain = config[0].strip()
+        return cls.objects.get(domain=my_domain)
+
+    @classmethod
+    def get_by_rank(self, rank):
+        return Peer.objects.order_by('-reputation', 'first_registered')[rank]
 
 
 class EpochTransactions(models.Model):
