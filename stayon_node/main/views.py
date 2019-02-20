@@ -142,11 +142,14 @@ def return_pull(request):
 
 def sync(request):
     start = dateutil.parser.parse(request.GET['start'])
-    ledgers = LedgerEntry.objects.filter(last_updated__gte=start).order_by('-last_updated')
+    ledgers = LedgerEntry.objects.filter(last_updated__gt=start).order_by('-last_updated')
     return JsonResponse({
-        'data': [x.address, "%.8f" % x.amount, x.last_updated.isoformat()]
+        'data': [
+            [x.address, "%.8f" % x.amount, x.last_updated.isoformat()]
+            for x in ledgers[:500]
+        ]
     })
 
 def network_summary(request):
     peers = Peer.objects.all()
-    return render(request, "stayon_summary.html", locals())
+    return render(request, "staeon_summary.html", locals())
