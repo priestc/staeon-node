@@ -1,4 +1,4 @@
-"""stayon_node URL Configuration
+"""staeon_node URL Configuration
 
 The `urlpatterns` list routes URLs to views. For more information please see:
     https://docs.djangoproject.com/en/1.11/topics/http/urls/
@@ -18,5 +18,5 @@ from django.contrib import admin
 
 urlpatterns = [
     url(r'^admin/', admin.site.urls),
-    url(r'^stayon/', include("main.urls"))
+    url(r'^staeon/', include("main.urls"))
 ]

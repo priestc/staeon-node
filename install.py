@@ -7,8 +7,8 @@ if sys.version_info <= (3,0):
     input = raw_input
 
 #os.system("pip install -r requirements.txt")
-#os.system("cp local_settings_default.py stayon_node/stayon_node/local_settings.py")
-#os.system("python stayon_node/manage.py migrate")
+#os.system("cp local_settings_default.py staeon_node/staeon_node/local_settings.py")
+#os.system("python staeon_node/manage.py migrate")
 
 domain = input("Enter your node's public domain: ")
 pk = input("Enter your node's payout private key: ")
