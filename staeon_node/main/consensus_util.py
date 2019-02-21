@@ -2,12 +2,15 @@ import datetime
 from bitcoin import ecdsa_verify, ecdsa_recover, ecdsa_sign, pubtoaddr, privtoaddr
 
 genesis = datetime.datetime(2019, 2, 14, 10, 0)
+epoch_lengh_seconds = 600
+epoch_closing_seconds = 10
+propagation_window_seconds = 10
 
 def get_epoch_range(n):
     """
     Given an epoch number, returns the start and end times for that epoch.
     """
-    start =  genesis + datetime.timedelta(minutes=10 * n)
+    start =  genesis + datetime.timedelta(seconds=epoch_lengh_seconds * n)
     return start, start + datetime.timedelta(minutes=10)
 
 def get_epoch_number(time):
@@ -15,9 +18,30 @@ def get_epoch_number(time):
     For a given time, returns which epoch number that date falls in.
     """
     delta = time - genesis
-    return int("%d" % (delta.total_seconds() / 600))
+    return int("%d" % (delta.total_seconds() / epoch_lengh_seconds))
+
+def seconds_til_next_epoch(t):
+    """
+    How many seconds from passed in datetime object does the next epoch start?
+    """
+    return epoch_lengh_seconds - (
+        ((t.minute % 10) * 60) + t.second + (t.microsecond / 1000000.0)
+    )
+
+def validate_timestamp(ts, now=None):
+    if seconds_til_next_epoch(ts) < epoch_closing_seconds:
+        raise Exception("Invalid timestamp: Within closing interval")
+    if not now:
+        return True
+    if ts - now < datetime.timedelta(seconds=propagation_window_seconds):
+        raise Exception("Expired timestamp: Propagation window exceeded")
+    return True
+
 
 def validate_ledger_hash_push(payout_address, ledger_hash, domain, sig):
+    """
+    Validates that the ledger hash push is indeed signed by the pusher.
+    """
     msg = "%s%s" % (ledger_hash, domain)
     try:
         pubkey = ecdsa_recover(msg, sig)

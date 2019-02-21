@@ -10,6 +10,7 @@ from django.db.models import Q
 from .models import LedgerEntry, Peer
 from bitcoin import ecdsa_sign, ecdsa_verify, ecdsa_recover, pubtoaddr
 from .tx_util import InvalidTransaction, validate_transaction
+from .consensus_util import validate_timestamp
 
 def send_tx(request):
     return render(request, "send_tx.html")
@@ -20,10 +21,26 @@ def accept_tx(request):
     except:
         return HttpResponseBadRequest("Invalid transaction JSON")
 
-    ts = dateutil.parser.parse(datetime.tx['timestamp'])
+    try:
+        auth = json.loads(request.POST['authorization'])
+    except:
+        auth = None
 
-    if ts - datetime.datetime.now() < datetime.timedelta(seconds=10):
-        return HttpResponseBadRequest("Transaction expired")
+    if not auth:
+        ts = dateutil.parser.parse(datetime.tx['timestamp'])
+        try:
+            validate_timestamp(ts)
+        except Exception as exc:
+            return HttpResponseBadRequest(
+                "Can't accept unauthorized transaction: %s" % str(exc)
+            )
+    else:
+        try:
+            validate_transaction_authorization(tx, auth)
+        except Exception as exc:
+            return HttpResponseBadRequest(
+                "Invalid transaction authorization: %s" % str(exc)
+            )
 
     for i, input in enumerate(tx['inputs']):
         address, amount, sig = input

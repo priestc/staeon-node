@@ -73,11 +73,12 @@ def validate_transaction(tx, min_fee=0.01):
     in_total = 0
     for i, input in enumerate(tx['inputs']):
         address, amount, sig = input
+        amount = _cut_to_8(amount)
         if amount <= 0:
             raise InvalidAmounts("Input %s can't be zero or negative" % i)
 
         message = "%s%s%s" % (address, amount, out_msg)
-        in_total += _cut_to_8(amount)
+        in_total += amount
         try:
             pubkey = ecdsa_recover(message, sig)
         except:
@@ -95,6 +96,36 @@ def validate_transaction(tx, min_fee=0.01):
     if fee < min_fee:
         raise InvalidFee("Fee of %.8f below min fee of %.8f" % (fee, min_fee))
 
+    return True
+
+def make_txid(tx):
+    msg = tx['timestamp']
+    for output in tx['outputs']:
+        msg += output[0] + output[1]
+
+    for input in tx['inputs']:
+        address, amount, sig = input
+        msg += "%s%s" % (address, amount)
+
+    return hashlib.sha256(msg).hexdigest()
+
+def make_transaction_authorization(tx, node):
+    txid = make_txid(tx)
+    msg = "%s%s" % (txid, node['domain'])
+    return {
+        'domain': node['domain'],
+        'signature': ecdsa_sign(msg, node['private_key'])
+    }
+
+def validate_transaction_authorization(tx, auth):
+    txid = make_txid(tx)
+    sig = auth['signature']
+    msg = "%s%s" % (txid, auth['domain'])
+    auth_pubkey = ecdsa_recover(msg, sig)
+    if not pubtoaddr(auth_pubkey) == auth['payout_address']:
+        raise Exception("Invalid Authprization: Signing key does not match payout address")
+    if not ecdsa_verify(msg, sig, auth_pubkey):
+        raise Exception("Invalid authorization: Invalid signature")
     return True
 
 if __name__ == '__main__':
