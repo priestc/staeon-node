@@ -1,5 +1,6 @@
 import datetime
 import random
+import hashlib
 
 from bitcoin import (
     ecdsa_verify, ecdsa_recover, ecdsa_sign, pubtoaddr, privtoaddr, is_address
@@ -63,7 +64,7 @@ def make_transaction(inputs, outputs):
     tx['outputs'] = outputs
     return tx
 
-def validate_transaction(tx, min_fee=0.01):
+def validate_transaction(tx, ledger, min_fee=0.01):
     """
     Validates that the passed in transaction object is valid in terms of
     cryptography. UTXO validation does not happen here.
@@ -83,6 +84,9 @@ def validate_transaction(tx, min_fee=0.01):
             pubkey = ecdsa_recover(message, sig)
         except:
             raise InvalidSignature("Signature %s not valid" % i)
+
+        if ledger(address) < amount:
+            raise InvalidAmounts("Not enough balance in %s" % address)
 
         valid_sig = ecdsa_verify(message, sig, pubkey)
         valid_address = pubtoaddr(pubkey) == address
@@ -110,17 +114,15 @@ def make_txid(tx):
     return hashlib.sha256(msg).hexdigest()
 
 def make_transaction_authorization(tx, node):
-    txid = make_txid(tx)
-    msg = "%s%s" % (txid, node['domain'])
+    msg = "%s%s" % (tx['txid'], node['domain'])
     return {
         'domain': node['domain'],
         'signature': ecdsa_sign(msg, node['private_key'])
     }
 
 def validate_transaction_authorization(tx, auth):
-    txid = make_txid(tx)
     sig = auth['signature']
-    msg = "%s%s" % (txid, auth['domain'])
+    msg = "%s%s" % (tx['txid'], auth['domain'])
     auth_pubkey = ecdsa_recover(msg, sig)
     if not pubtoaddr(auth_pubkey) == auth['payout_address']:
         raise Exception("Invalid Authprization: Signing key does not match payout address")
@@ -146,13 +148,26 @@ if __name__ == '__main__':
         ['16ViwyAVeKtz4vbTXWRSYgadT5w3Rj3yuq', 2.2],
         ['18pPTxvTc9rJZfD2tM1bNYHFhAcZjgqEdQ', 1.4]
     ]
-    assert validate_transaction(make_transaction(i, o)), "Basic transaction creation fails"
+    def ledger(address):
+        if address.startswith("18p"): return 3.2
+        if address.startswith("14Z"): return 0.5
+
+    assert validate_transaction(make_transaction(i, o), ledger), "Basic transaction creation fails"
+
+    def bad_ledger(address):
+        if address.startswith("18p"): return 1.0
+        if address.startswith("14Z"): return 0.3
+
+    assert_raises(
+        lambda: validate_transaction(make_transaction(i, o), bad_ledger),
+        InvalidAmounts, "Catch input spending coin that doesn't exist"
+    )
 
     # testing invalid signature fails
     bad_sig = make_transaction(i, o)
     bad_sig['inputs'][0][2] = "23784623kjhdfkjashdfkj837242387"
     assert_raises(
-        lambda: validate_transaction(bad_sig), InvalidSignature,
+        lambda: validate_transaction(bad_sig, ledger), InvalidSignature,
         "Invalid Signature not happening when sig is edited"
     )
 
@@ -160,7 +175,7 @@ if __name__ == '__main__':
     bad_tx = make_transaction(i, o)
     bad_tx['inputs'][0][1] = 0.2
     assert_raises(
-        lambda: validate_transaction(bad_tx), InvalidSignature,
+        lambda: validate_transaction(bad_tx, ledger), InvalidSignature,
         "Invalid Signature not happening when amount is changed"
     )
 
@@ -207,7 +222,7 @@ if __name__ == '__main__':
         'timestamp': '2019-02-13T19:14:27.882253'
     }
     assert_raises(
-        lambda: validate_transaction(bad_tx), InvalidAmounts,
+        lambda: validate_transaction(bad_tx, ledger), InvalidAmounts,
         "Invalid Amount not happening when outputs exceed inputs when validating"
     )
 
@@ -224,7 +239,7 @@ if __name__ == '__main__':
         'timestamp': '2019-02-13T19:47:07.354060'
     }
     assert_raises(
-        lambda: validate_transaction(bad_tx), InvalidAmounts,
+        lambda: validate_transaction(bad_tx, ledger), InvalidAmounts,
         "Invalid Amount not happening when outputs is negative when validating"
     )
 
@@ -239,7 +254,7 @@ if __name__ == '__main__':
         'timestamp': '2019-02-17T12:02:41.843542'
     }
     assert_raises(
-        lambda: validate_transaction(bad_tx), InvalidAddress,
+        lambda: validate_transaction(bad_tx, ledger), InvalidAddress,
         "Invalid address not being caught."
     )
 

@@ -100,9 +100,8 @@ class LedgerHash(models.Model):
     hash = models.CharField(max_length=64)
     epoch = models.IntegerField()
 
-class EpochTransactions(models.Model):
+class ValidatedTransaction(models.Model):
+    txid = models.Charfield(max_length=64, primary_key=True)
     epoch_number = models.IntegerField()
-    transactions = models.TextField()
-
-    def adjustment_for_address(self, address):
-        pass
+    spent_inputs = models.TextField()
+    outputs = models.TextField()

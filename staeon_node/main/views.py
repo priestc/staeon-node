@@ -9,7 +9,10 @@ from django.db.models import Q
 
 from .models import LedgerEntry, Peer
 from bitcoin import ecdsa_sign, ecdsa_verify, ecdsa_recover, pubtoaddr
-from .tx_util import InvalidTransaction, validate_transaction
+from .tx_util import (
+    make_transaction_authorization, validate_transaction_authorization,
+    InvalidTransaction, validate_transaction, make_txid
+)
 from .consensus_util import validate_timestamp
 
 def send_tx(request):
@@ -18,12 +21,14 @@ def send_tx(request):
 def accept_tx(request):
     try:
         tx = json.loads(request.POST['tx'])
-    except:
+    except ValueError:
         return HttpResponseBadRequest("Invalid transaction JSON")
+
+    tx['txid'] = make_txid(tx)
 
     try:
         auth = json.loads(request.POST['authorization'])
-    except:
+    except ValueError:
         auth = None
 
     if not auth:
@@ -35,6 +40,13 @@ def accept_tx(request):
                 "Can't accept unauthorized transaction: %s" % str(exc)
             )
     else:
+        try:
+            p = Peer.objects.get(domain=auth['domain'])
+        except Peer.DoesNotExist:
+            return HttpResponseBadRequest("Unregistered peer")
+
+        auth['payout_address'] = p.payout_address
+
         try:
             validate_transaction_authorization(tx, auth)
         except Exception as exc:
@@ -49,20 +61,19 @@ def accept_tx(request):
             entry = LedgerEntry.objects.get(address=address)
         except LegderEntry.DoesNotExist:
             return HttpResponseBadRequest(
-                "Address %s does not exist" % address
+                "Input %d (%s) does not exist" % (i, address)
             )
         if entry.amount <= amount:
             return HttpResponseBadRequest(
-                "Address %s does not have enough balance" % address
+                "Input %d (%s) does not have enough balance" % (i, address)
             )
         if entry.last_updated > ts:
             return HttpResponseBadRequest(
-                "Timestamp in the past for input %s" % i
+                "Timestamp before last change for input %s" % i
             )
 
     for output in tx['outputs']:
         address, amount = output
-
         try:
             entry = LedgerEntry.objects.get(address=address)
         except LegderEntry.DoesNotExist:
@@ -73,18 +84,14 @@ def accept_tx(request):
     except InvalidTransaction as exc:
         return HttpResponseBadRequest("Transaction Invalid: %s" % str(exc))
 
-    for input in tx['inputs']:
-        entry = LegderEntry.objects.get(address=input['address'])
-        entry.amount -= input
-        entry.last_updated = ts
-        entry.save()
+    txid = tx['txid']
+    del tx['txid']
 
-    for output in tx['outputs']:
-        address, amount = output
-        entry, c = LedgerEntry.objects.get_or_create(address=address)
-        entry.amount += output
-        entry.last_updated = ts
-        entry.save()
+    ValidatedTransaction.objects.create(
+        txid=txid,
+        body=json.dumps(tx),
+        epoch=
+    )
 
     return HttpResponse("OK")
 
