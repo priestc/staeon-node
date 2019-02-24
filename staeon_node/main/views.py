@@ -9,11 +9,10 @@ from django.db.models import Q
 
 from .models import LedgerEntry, Peer, ValidatedTransaction
 from bitcoin import ecdsa_sign, ecdsa_verify, ecdsa_recover, pubtoaddr
-from .tx_util import (
-    make_transaction_authorization, validate_transaction_authorization,
-    InvalidTransaction, ExpiredTransaction, validate_transaction, make_txid
-)
-from .consensus_util import validate_timestamp
+
+from staeon.transaction import validate_transaction, make_txid
+from staeon.consensus import validate_timestamp
+from staeon.exceptions import InvalidTransaction, RejectedTransaction
 
 def ledger(address, timestamp):
     try:
@@ -43,7 +42,7 @@ def accept_tx(request):
         validate_transaction(tx)
     except InvalidTransaction as exc:
         return HttpResponseBadRequest("Invalid: %s " % exc.display)
-    except ExpiredTransaction as exc:
+    except RejectedTransaction as exc:
         propagate_rejection(tx, exc)
         return HttpResponseBadRequest("Rejected: %s" % exc.display)
 

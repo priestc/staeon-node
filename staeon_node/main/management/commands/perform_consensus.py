@@ -2,7 +2,7 @@ import datetime
 
 from django.core.management.base import BaseCommand, CommandError
 from main.models import Peer, LedgerEntry, LedgerHash
-from main.consensus_util import get_epoch_number
+from staeon.consensus import get_epoch_number
 
 class Command(BaseCommand):
     help = 'Starts the consensus process. Called every 10 minutes.'

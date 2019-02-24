@@ -7,8 +7,8 @@ import hashlib
 import dateutil.parser
 from django.db import models
 from django.conf import settings
-from .consensus_util import get_epoch_range, get_epoch_number
-from .tx_util import make_txid
+from staeon.consensus import get_epoch_range, get_epoch_number
+from staeon.transaction import make_txid
 
 class LedgerEntry(models.Model):
     address = models.CharField(max_length=35, primary_key=True)
@@ -95,7 +95,7 @@ class ValidatedTransaction(models.Model):
     timestamp = models.DateTimeField()
     spent_inputs = models.TextField()
     outputs = models.TextField()
-    rejected_reputation = moels.FloatField(default=0)
+    rejected_reputation = models.FloatField(default=0)
 
     @classmethod
     def record(cls, tx):
