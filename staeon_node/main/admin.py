@@ -4,7 +4,7 @@ from __future__ import unicode_literals
 from django.db import models
 from django import forms
 from django.contrib import admin
-from .models import LedgerEntry, Peer
+from .models import LedgerEntry, Peer, ValidatedTransaction
 
 class PeerAdmin(admin.ModelAdmin):
     list_display = (
@@ -19,5 +19,9 @@ class PeerAdmin(admin.ModelAdmin):
 class LedgerAdmin(admin.ModelAdmin):
     list_display = ('address', 'amount', 'last_updated')
 
+class ValidatedTransactionAdmin(admin.ModelAdmin):
+    list_display = ('txid', 'epoch', 'timestamp')
+
 admin.site.register(Peer, PeerAdmin)
 admin.site.register(LedgerEntry, LedgerAdmin)
+admin.site.register(ValidatedTransaction, ValidatedTransactionAdmin)

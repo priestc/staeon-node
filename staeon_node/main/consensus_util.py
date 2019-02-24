@@ -6,6 +6,9 @@ epoch_lengh_seconds = 600
 epoch_closing_seconds = 10
 propagation_window_seconds = 10
 
+class ExpiredTimestamp(Exception):
+    pass
+
 def get_epoch_range(n):
     """
     Given an epoch number, returns the start and end times for that epoch.
@@ -30,11 +33,11 @@ def seconds_til_next_epoch(t):
 
 def validate_timestamp(ts, now=None):
     if seconds_til_next_epoch(ts) < epoch_closing_seconds:
-        raise Exception("Invalid timestamp: Within closing interval")
+        raise ExpiredTimestamp("Within closing interval")
     if not now:
-        return True
+        now = datetime.datetime.now()
     if ts - now < datetime.timedelta(seconds=propagation_window_seconds):
-        raise Exception("Expired timestamp: Propagation window exceeded")
+        raise ExpiredTimestamp("Propagation window exceeded")
     return True
 
 

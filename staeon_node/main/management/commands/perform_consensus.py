@@ -23,7 +23,7 @@ class Command(BaseCommand):
         if LedgerHash.object.filter(epoch=epoch).exists():
             raise Exception("Epoch consensus already performed")
 
-        ledger_hash = LedgerEntry.ledger_hash(epoch)
+        ledger_hash = ValidatedTransaction.ledger_hash(epoch)
         LedgerHash.objects.create(epoch=epoch, hash=ledger_hash)
 
         peers = list(Peer.objects.all().order_by('reputation', 'first_registered'))

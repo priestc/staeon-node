@@ -6,7 +6,19 @@ from bitcoin import (
     ecdsa_verify, ecdsa_recover, ecdsa_sign, pubtoaddr, privtoaddr, is_address
 )
 
+from .consensus_util import validate_timestamp
+
 class InvalidTransaction(Exception):
+    def display(self):
+        return "%s: %s" % (self.__class__, str(self))
+
+class RejectedTransaction(Exception):
+    pass
+
+class PotentialDoubleSpend(RejectedTransaction):
+    pass
+
+class ExpiredTransaction(RejectedTransaction):
     pass
 
 class InvalidSignature(InvalidTransaction):
@@ -64,12 +76,15 @@ def make_transaction(inputs, outputs):
     tx['outputs'] = outputs
     return tx
 
-def validate_transaction(tx, ledger, min_fee=0.01):
+def validate_transaction(tx, ledger=None, min_fee=0.01):
     """
     Validates that the passed in transaction object is valid in terms of
     cryptography. UTXO validation does not happen here.
+    `ledger` is a callable that returns the address's balance and last spend timestamp.
     """
-    out_total, out_msg = _process_outputs(tx['outputs'], tx['timestamp'])
+    ts = tx['timestamp']
+    out_total, out_msg = _process_outputs(tx['outputs'], ts)
+    validate_timestamp(ts)
 
     in_total = 0
     for i, input in enumerate(tx['inputs']):
@@ -85,7 +100,7 @@ def validate_transaction(tx, ledger, min_fee=0.01):
         except:
             raise InvalidSignature("Signature %s not valid" % i)
 
-        if ledger(address) < amount:
+        if ledger and ledger(address) < amount:
             raise InvalidAmounts("Not enough balance in %s" % address)
 
         valid_sig = ecdsa_verify(message, sig, pubkey)
@@ -105,7 +120,8 @@ def validate_transaction(tx, ledger, min_fee=0.01):
 def make_txid(tx):
     msg = tx['timestamp']
     for output in tx['outputs']:
-        msg += output[0] + output[1]
+        address, amount = output
+        msg += address + "%.8f" % amount
 
     for input in tx['inputs']:
         address, amount, sig = input
@@ -153,6 +169,8 @@ if __name__ == '__main__':
         if address.startswith("14Z"): return 0.5
 
     assert validate_transaction(make_transaction(i, o), ledger), "Basic transaction creation fails"
+
+    # testing ledger callback catches coins being spent out of thin air.
 
     def bad_ledger(address):
         if address.startswith("18p"): return 1.0
