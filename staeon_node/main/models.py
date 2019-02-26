@@ -50,9 +50,9 @@ class Peer(models.Model):
     def rank(self):
         return self.nodes_ranked_above().count()
 
-    def rep_precent(self):
+    def rep_percent(self):
         total_rep = Peer.objects.all().aggregate(x=models.Sum("reputation"))['x']
-        return "%.2f%%" % (self.reputation * 100 / total_rep)
+        return (self.reputation * 100 / total_rep)
 
     def rep_percentile(self):
         """
@@ -60,7 +60,7 @@ class Peer(models.Model):
         """
         total = self.nodes_ranked_below().aggregate(x=models.Sum('reputation'))['x'] or 0
         total += self.reputation
-        return "%.2f%%" % (total / self.total_rep() * 100)
+        return total / self.total_rep() * 100
 
     @classmethod
     def total_rep(cls):
@@ -78,13 +78,33 @@ class Peer(models.Model):
 
     @classmethod
     def my_node(cls):
+        my_domain, my_pk = cls.my_node_data()
+        obj = cls.objects.get(domain=my_domain)
+        obj.private_key = my_pk
+        return obj
+
+    @classmethod
+    def my_node_data(cls):
         config = open(os.path.join(settings.BASE_DIR, "../node.conf")).readlines()
         my_domain = config[0].strip()
-        return cls.objects.get(domain=my_domain)
+        my_pk = config[1].strip()
+        return my_domain, my_pk
 
     @classmethod
     def get_by_rank(self, rank):
         return Peer.objects.order_by('-reputation', 'first_registered')[rank]
+
+    def as_dict(self):
+        my_domain, my_pk = Peer.my_node_data()
+        return {
+            'domain': self.domain,
+            'reputation': self.reputation,
+            'rank': self.rank(),
+            'percent': self.rep_precent(),
+            'payout_address': self.payout_address,
+            'private_key': my_pk if my_domain == self.domain else None
+        }
+
 
 class LedgerHash(models.Model):
     hash = models.CharField(max_length=64)
@@ -93,20 +113,25 @@ class LedgerHash(models.Model):
 class ValidatedTransaction(models.Model):
     txid = models.CharField(max_length=64, primary_key=True)
     timestamp = models.DateTimeField()
-    spent_inputs = models.TextField()
-    outputs = models.TextField()
-    rejected_reputation = models.FloatField(default=0)
+    rejected_reputation_percentile = models.FloatField(default=0)
 
     @classmethod
     def record(cls, tx):
-        if not 'txid' in tx:
-            tx['txid'] = make_txid(tx)
-        return cls.objects.create(
+        if not 'txid' in tx: tx['txid'] = make_txid(tx)
+
+        tx = cls.objects.create(
             txid=tx['txid'],
-            spent_inputs="\n".join("%s,%.8f" % (x[0], x[1]) for x in tx['inputs']),
-            outputs="\n".join("%s,%.8f" % (x[0], x[1]) for x in tx['outputs']),
             timestamp=dateutil.parser.parse(tx['timestamp'])
         )
+        for address, amount, sig in tx['inputs']:
+            ValidatedMovement.objects.create(
+                tx=tx, address=address, amount=(amount * -1)
+            )
+
+        for address, amount in tx['outputs']:
+            ValidatedMovement.objects.create(
+                tx=tx, address=address, amount=amount
+            )
 
     @classmethod
     def ledger_hash(cls, epoch):
@@ -149,3 +174,12 @@ class ValidatedTransaction(models.Model):
                 amount += float(out_amount)
 
         return amount
+
+class ValidatedMovement(models.Model):
+    """
+    Represents either an Input or an Output of a validated transaction.
+    Inputs will have a negative value, outputs will always be positive.
+    """
+    tx = models.ForeignKey(ValidatedTransaction)
+    address = models.CharField(max_length=35)
+    amount = models.FloatField()

@@ -11,7 +11,7 @@ from .models import LedgerEntry, Peer, ValidatedTransaction
 from bitcoin import ecdsa_sign, ecdsa_verify, ecdsa_recover, pubtoaddr
 
 from staeon.transaction import validate_transaction, make_txid
-from staeon.consensus import validate_timestamp
+from staeon.consensus import validate_rejection_authorization
 from staeon.exceptions import InvalidTransaction, RejectedTransaction
 
 def ledger(address, timestamp):
@@ -43,7 +43,10 @@ def accept_tx(request):
     except InvalidTransaction as exc:
         return HttpResponseBadRequest("Invalid: %s " % exc.display)
     except RejectedTransaction as exc:
-        propagate_rejection(tx, exc)
+        my_node = Peer.my_node()
+        propagate_rejection(
+            tx, exc, Peer.my_node(), [x.as_dict() for x in Peer.object.all()]
+        )
         return HttpResponseBadRequest("Rejected: %s" % exc.display)
 
     # save to "mempool"
@@ -51,8 +54,27 @@ def accept_tx(request):
 
     return HttpResponse("OK")
 
-def pass_on_to_peers(obj):
-    peers = Peer.objects.all()
+def rejections(request):
+    if request.POST:
+        domain = request.POST['domain']
+        txid = request.POST['txid']
+        rejecting_node = Peer.objects.get(domain=domain)
+
+        rejection = {
+            'domain': domain,
+            'txid': txid,
+            'signature': request.POST['signature']
+        }
+        try:
+            validate_rejection_authorization(rejection)
+        except Exception as exc:
+            return HttpResponseBadRequest("Invalid Rejection: %s" % exc.display)
+        tx,c = ValidatedTransaction.objects.get_or_create(txid=txid)
+        tx.rejected_reputation_percentile += rejecting_node.rep_percentile()
+        tx.save()
+    else:
+        rejected = ValidatedTransaction.objects.filter(rejected_reputation__gt=0)
+        return render(request, "rejections.html", locals())
 
 def get_peers(request):
     pass
