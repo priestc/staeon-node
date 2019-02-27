@@ -1,0 +1,12 @@
+<html>
+<h1>Staeon</h1>
+  <body>
+    <table>
+      <tr>
+        <td><a href="{% url 'summary' %}">Summary</a></td>
+        <td><a href="{% url 'rejections' %}">Rejections</a></td>
+      </tr>
+    </table>
+    {% block content %}{% endblock %}
+  </body>
+</html>

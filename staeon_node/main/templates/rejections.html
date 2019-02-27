@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+
+{% block content %}
+  <h2>Rejected Transactions in Epoch {{ epoch }}</h2>
+  {% for tx in rejections %}
+    {{ tx.txid }} - {{ tx.rejected_reputation_percentile }}<br>
+  {% empty %}
+    No rejected transactions this epoch.
+  {% endfor %}
+{% endblock %}

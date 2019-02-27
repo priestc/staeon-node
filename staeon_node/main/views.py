@@ -11,7 +11,9 @@ from .models import LedgerEntry, Peer, ValidatedTransaction
 from bitcoin import ecdsa_sign, ecdsa_verify, ecdsa_recover, pubtoaddr
 
 from staeon.transaction import validate_transaction, make_txid
-from staeon.consensus import validate_rejection_authorization
+from staeon.consensus import (
+    validate_rejection_authorization, get_epoch_number, get_epoch_range
+)
 from staeon.exceptions import InvalidTransaction, RejectedTransaction
 
 def ledger(address, timestamp):
@@ -51,10 +53,11 @@ def accept_tx(request):
 
     # save to "mempool"
     ValidatedTransaction.record(tx)
+    pass_on_to_peers(tx=tx)
 
     return HttpResponse("OK")
 
-def rejections(request):
+def rejections(request, epoch=None):
     if request.POST:
         domain = request.POST['domain']
         txid = request.POST['txid']
@@ -73,7 +76,11 @@ def rejections(request):
         tx.rejected_reputation_percentile += rejecting_node.rep_percentile()
         tx.save()
     else:
-        rejected = ValidatedTransaction.objects.filter(rejected_reputation__gt=0)
+        epoch = get_epoch_number()
+        rejected = ValidatedTransaction.objects.filter(
+            rejected_reputation_percentile__gt=0,
+            timestamp__gt=epoch_start, timestamp_lt=epoch_end
+        )
         return render(request, "rejections.html", locals())
 
 def get_peers(request):
@@ -109,7 +116,7 @@ def add_peer(request):
             first_registered=ts
         )
 
-    pass_on_to_peers(reg)
+    pass_on_to_peers(registration=reg)
 
     return HttpResponse("OK")
 
