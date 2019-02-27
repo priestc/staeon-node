@@ -27,6 +27,10 @@ DEBUG = True
 
 ALLOWED_HOSTS = []
 
+try:
+    import local_settings
+except ImportError:
+    local_settings = None
 
 # Application definition
 
@@ -37,9 +41,8 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
-    'django_extensions',
     'main',
-]
+] + (local_settings.DEV_APPS if local_settings else [])
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
