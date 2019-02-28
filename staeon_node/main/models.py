@@ -85,7 +85,7 @@ class Peer(models.Model):
 
     @classmethod
     def my_node_data(cls):
-        config = open(os.path.join(settings.BASE_DIR, "../node.conf")).readlines()
+        config = open("/etc/staeon-node.conf").readlines()
         my_domain = config[0].strip()
         my_pk = config[1].strip()
         return my_domain, my_pk
@@ -94,17 +94,20 @@ class Peer(models.Model):
     def get_by_rank(self, rank):
         return Peer.objects.order_by('-reputation', 'first_registered')[rank]
 
-    def as_dict(self):
-        my_domain, my_pk = Peer.my_node_data()
-        return {
+    def as_dict(self, pk=False):
+        ret = {
             'domain': self.domain,
             'reputation': self.reputation,
             'rank': self.rank(),
-            'percent': self.rep_precent(),
+            'percent': self.rep_percent(),
+            'percentile': self.rep_percentile(),
             'payout_address': self.payout_address,
-            'private_key': my_pk if my_domain == self.domain else None
         }
-
+        if pk:
+            my_domain, my_pk = Peer.my_node_data()
+            if my_domain == self.domain:
+                ret['private_key'] = my_pk
+        return ret
 
 class LedgerHash(models.Model):
     hash = models.CharField(max_length=64)

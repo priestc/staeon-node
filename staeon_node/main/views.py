@@ -45,9 +45,10 @@ def accept_tx(request):
     except InvalidTransaction as exc:
         return HttpResponseBadRequest("Invalid: %s " % exc.display)
     except RejectedTransaction as exc:
-        my_node = Peer.my_node()
+        ValidatedTransaction.record(tx, reject=True)
         propagate_rejection(
-            tx, exc, Peer.my_node(), [x.as_dict() for x in Peer.object.all()]
+            tx, exc, Peer.my_node().as_dict(pk=True),
+            [x.as_dict() for x in Peer.object.all()]
         )
         return HttpResponseBadRequest("Rejected: %s" % exc.display)
 
@@ -57,7 +58,7 @@ def accept_tx(request):
 
     return HttpResponse("OK")
 
-def rejections(request, epoch=None):
+def rejections(request):
     if request.POST:
         domain = request.POST['domain']
         txid = request.POST['txid']
@@ -76,15 +77,28 @@ def rejections(request, epoch=None):
         tx.rejected_reputation_percentile += rejecting_node.rep_percentile()
         tx.save()
     else:
-        epoch = get_epoch_number()
+        if 'epoch' in request.GET:
+            epoch = int(request.GET['epoch'])
+        else:
+            epoch = get_epoch_number()
+
+        epoch_start, epoch_end = get_epoch_range(epoch)
         rejected = ValidatedTransaction.objects.filter(
             rejected_reputation_percentile__gt=0,
-            timestamp__gt=epoch_start, timestamp_lt=epoch_end
+            timestamp__gt=epoch_start, timestamp__lt=epoch_end
         )
         return render(request, "rejections.html", locals())
 
 def get_peers(request):
-    pass
+    peers = Peer.objects.all()
+    peers = [x.as_dict() for x in peers]
+
+    if 'top' in request.GET:
+        peers = filter(lambda x: x['percentile'] > 50, peers)
+
+    return JsonResponse({
+        'peers': peers
+    })
 
 def add_peer(request):
     try:
