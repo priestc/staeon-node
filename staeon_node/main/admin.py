@@ -26,7 +26,29 @@ class LedgerAdmin(admin.ModelAdmin):
     list_display = ('address', 'amount', 'last_updated')
 
 class ValidatedTransactionAdmin(admin.ModelAdmin):
-    list_display = ('txid', 'epoch', 'timestamp', 'rejected_reputation_percentile')
+    list_display = (
+        'txid', 'epoch', 'timestamp', 'rejected_reputation_percentile',
+        'column_movements'
+    )
+    readonly_fields = (
+        'readonly_movements', 'epoch', 'timestamp', 'txid',
+        'rejected_reputation_percentile'
+    )
+
+    def column_movements(self, obj):
+        movements = ""
+        for mov in obj.validatedmovement_set.all():
+            movements += "%s<br>" % str(mov)
+        return movements
+    column_movements.allow_tags = True
+
+    def readonly_movements(self, obj):
+        movements = ""
+        for mov in obj.validatedmovement_set.all():
+            movements += "%s %s<br>" % (mov.address, mov.disp_amount)
+        return movements
+    readonly_movements.allow_tags = True
+    readonly_movements.short_description = "Movements"
 
 admin.site.register(Peer, PeerAdmin)
 admin.site.register(LedgerEntry, LedgerAdmin)

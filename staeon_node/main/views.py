@@ -22,12 +22,12 @@ def ledger(address, timestamp):
     except LegderEntry.DoesNotExist:
         raise Exception("%s does not exist" % address)
 
-    last_updated = enter.last_updated
+    last_updated = entry.last_updated
     current_balance = entry.amount
-    already_spent = ValidatedTransaction.adjusted_balance(address)
-    last_spend = ValidatedTransaction.last_spend(address)
+    adjusted = ValidatedTransaction.adjusted_balance(address)
+    spend_this_epoch = ValidatedTransaction.last_spend(address)
 
-    return current_balance, last_updated
+    return (current_balance + adjusted), spend_this_epoch or last_updated
 
 def send_tx(request):
     return render(request, "send_tx.html")
@@ -77,6 +77,7 @@ def rejections(request):
         tx.rejected_reputation_percentile += rejecting_node.rep_percentile()
         tx.save()
     else:
+        # rendering the rejections page
         if 'epoch' in request.GET:
             epoch = int(request.GET['epoch'])
         else:
@@ -87,6 +88,10 @@ def rejections(request):
             rejected_reputation_percentile__gt=0,
             timestamp__gt=epoch_start, timestamp__lt=epoch_end
         )
+        if 'json' in request.GET:
+            return JsonResponse({'rejections': [
+                (tx.txid, tx.rejected_reputation_percentile) for tx in rejected
+            ]})
         return render(request, "rejections.html", locals())
 
 def get_peers(request):

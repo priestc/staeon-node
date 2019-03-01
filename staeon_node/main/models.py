@@ -7,7 +7,7 @@ import hashlib
 import dateutil.parser
 from django.db import models
 from django.conf import settings
-from staeon.consensus import get_epoch_range, get_epoch_number
+from staeon.consensus import get_epoch_range, get_epoch_number, deterministic_shuffle
 from staeon.transaction import make_txid
 
 class LedgerEntry(models.Model):
@@ -29,9 +29,12 @@ class Peer(models.Model):
         return "%s (rank %s)" % (self.domain, self.rank())
 
     @classmethod
-    def shuffle(cls, peers, hash, n=0):
-        sorter = lambda x: hashlib.sha256(x.domain + hash + str(n)).hexdigest()
-        return sorted(peers, key=sorter)
+    def shuffle(cls, peers=None, n=0):
+        seed = LedgerHash.objects.latest()
+        if not peers: peers = Peer.objects.all()
+        return deterministic_shuffle(
+            peers, n=n, sort_key=lambda x: x.domain, seed=seed
+        )
 
     def nodes_ranked_above(self):
         return Peer.objects.filter(
@@ -113,70 +116,83 @@ class LedgerHash(models.Model):
     hash = models.CharField(max_length=64)
     epoch = models.IntegerField()
 
+    class Meta:
+        get_latest_by = 'epoch'
+
 class ValidatedTransaction(models.Model):
     txid = models.CharField(max_length=64, primary_key=True)
     timestamp = models.DateTimeField()
     rejected_reputation_percentile = models.FloatField(default=0)
+    applied = models.BooleanField(default=False)
 
     @classmethod
-    def record(cls, tx):
+    def record(cls, tx, as_reject=False):
         if not 'txid' in tx: tx['txid'] = make_txid(tx)
 
-        tx = cls.objects.create(
+        obj = cls.objects.create(
             txid=tx['txid'],
-            timestamp=dateutil.parser.parse(tx['timestamp'])
+            timestamp=dateutil.parser.parse(tx['timestamp']),
+            rejected_reputation_percentile=(
+                Peer.my_node().rep_percent() if as_reject else 0
+            )
         )
         for address, amount, sig in tx['inputs']:
             ValidatedMovement.objects.create(
-                tx=tx, address=address, amount=(amount * -1)
+                tx=obj, address=address, amount=(amount * -1)
             )
 
         for address, amount in tx['outputs']:
             ValidatedMovement.objects.create(
-                tx=tx, address=address, amount=amount
+                tx=obj, address=address, amount=amount
             )
 
-    @classmethod
-    def ledger_hash(cls, epoch):
-        epoch_start, epoch_end = get_epoch_range(epoch)
-        transactions = cls.objects.filter(
-            timestamp__lte=epoch_end,
-            timestamp__gte=epoch_start,
-        ).order_by('last_updated', 'txid')
+    def __unicode__(self):
+        return self.txid[:8]
 
+    @classmethod
+    def filter_for_epoch(self, epoch=None):
+        if not epoch: epoch = get_epoch_number()
+        epoch_start, epoch_end = get_epoch_range(epoch)
+        return cls.objects.filter(
+            timestamp__lte=epoch_end, timestamp__gte=epoch_start,
+        ).order_by('txid')
+
+    @classmethod
+    def ledger_hash(cls, epoch=None):
+        if not epoch: epoch = get_epoch_number()
+        transactions = cls.filter_for_epoch(epoch)
         return hashlib.sha256("".join([
             tx.txid for tx in transactions
         ]) + str(epoch)).hexdigest()
 
     @classmethod
-    def adjusted_balance(cls, address, epoch):
-        epoch_start, epoch_end = get_epoch_range(epoch)
-        records = ValidatedTransaction.objects.filter(
-            (Q(spent_inputs__contains=address) | Q(outputs__contains=address))
-            & (Q(timestamp__gt=epoch_start) & Q(timestamp__lt=epoch_end))
-        )
+    def adjusted_balance(cls, address, epoch=None):
+        vtx = cls.filter_for_epoch(epoch)
+        records = vtx.objects.filter(validatedmovement__address=address)
+
         total_adjusted = 0
         for record in records:
-            total_adjusted += record.amount_for_address(address)
+            total_adjusted += record.amount
 
         return total_adjusted
 
     def epoch(self):
         return get_epoch_number(self.timestamp)
 
-    def amount_for_address(self, address):
-        amount = 0
-        for input in self.spent_inputs.split("\n"):
-            in_address, in_amount = input.split(",")
-            if in_address == address:
-                amount -= float(in_amount)
-
-        for output in self.outputs.split("\n"):
-            out_address, out_amount = output.split(",")
-            if out_address == address:
-                amount += float(out_amount)
-
-        return amount
+    @classmethod
+    def apply_to_ledger(cls, epoch):
+        """
+        Called at the begining of end of each epoch. Applies all valid
+        transactions into the LedgerEntry table.
+        """
+        movements = ValidatedMovement.objects.filter(
+            tx__in=cls.filter_for_epoch(epoch)
+        )
+        for tx in movements:
+            le, c = LedgerEntry.objects.get_or_create(address=movement.address)
+            le.amount += mobement.amount
+            le.applied = True
+            le.save()
 
 class ValidatedMovement(models.Model):
     """
@@ -186,3 +202,13 @@ class ValidatedMovement(models.Model):
     tx = models.ForeignKey(ValidatedTransaction)
     address = models.CharField(max_length=35)
     amount = models.FloatField()
+
+    @property
+    def disp_amount(self):
+        sign = ""
+        if self.amount > 0:
+            sign = "+"
+        return "%s%.8f" % (sign, self.amount)
+
+    def __unicode__(self):
+        return "%s %s" % (self.address[:8], self.disp_amount)
