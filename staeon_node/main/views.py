@@ -10,9 +10,11 @@ from django.db.models import Q
 from .models import LedgerEntry, Peer, ValidatedTransaction
 from bitcoin import ecdsa_sign, ecdsa_verify, ecdsa_recover, pubtoaddr
 
+from staeon.peer_registration import validate_peer_registration
 from staeon.transaction import validate_transaction, make_txid
 from staeon.consensus import (
-    validate_rejection_authorization, get_epoch_number, get_epoch_range
+    validate_rejection_authorization, get_epoch_number, get_epoch_range,
+    propagate_to_peers
 )
 from staeon.exceptions import InvalidTransaction, RejectedTransaction
 
@@ -54,7 +56,7 @@ def accept_tx(request):
 
     # save to "mempool"
     ValidatedTransaction.record(tx)
-    pass_on_to_peers(tx=tx)
+    propagate_to_peers(tx, "transaction")
 
     return HttpResponse("OK")
 
@@ -76,6 +78,7 @@ def rejections(request):
         tx,c = ValidatedTransaction.objects.get_or_create(txid=txid)
         tx.rejected_reputation_percentile += rejecting_node.rep_percentile()
         tx.save()
+        propagate_to_peers(rejection, "rejections")
     else:
         # rendering the rejections page
         if 'epoch' in request.GET:
@@ -94,78 +97,88 @@ def rejections(request):
             ]})
         return render(request, "rejections.html", locals())
 
-def get_peers(request):
-    peers = Peer.objects.all()
-    peers = [x.as_dict() for x in peers]
+def peers(request):
+    if request.GET:
+        peers = Peer.objects.all()
+        peers = [x.as_dict() for x in peers]
 
-    if 'top' in request.GET:
-        peers = filter(lambda x: x['percentile'] > 50, peers)
+        if 'top' in request.GET:
+            peers = filter(lambda x: x['percentile'] > 50, peers)
 
-    return JsonResponse({
-        'peers': peers
-    })
+        return JsonResponse({
+            'peers': peers
+        })
+    else:
+        try:
+            reg = json.loads(request.POST['registration'])
+        except Exception as exc:
+            return HttpResponseBadRequest("Invalid registration JSON: %s" % str(exc))
 
-def add_peer(request):
-    try:
-        reg = json.loads(request.POST['registration'])
-    except Exception as exc:
-        return HttpResponseBadRequest("Invalid transaction JSON: %s" % str(exc))
+        for item in ['signature', 'timestamp', 'domain', 'payout_address']:
+            if item not in reg:
+                return HttpResponseBadRequest(
+                    "%s missing" % item.replace("_", " ").title()
+                )
 
-    for item in ['signature', 'timestamp', 'domain', 'payout_address']:
-        if item not in reg:
-            return HttpResponseBadRequest(
-                "%s missing" % item.replace("_", " ").title()
+        try:
+            validate_peer_registration(reg)
+        except Exception as exc:
+            return HttpResponseBadRequest("Registration Invalid: %s" % exc)
+
+        try:
+            p = Peer.objects.get(
+                Q(domain=reg['domain']) | Q(payout_address=reg['payout_address'])
+            )
+            p.domain = reg['domain']
+            p.payout_address = reg['payout_address']
+            p.save()
+        except Peer.DoesNotExist:
+            Peer.objects.create(
+                domain=reg['domain'],
+                payout_address=reg['payout_address'],
+                first_registered=ts
             )
 
-    ts = dateutil.parser.parse(reg['timestamp'])
-    if ts - datetime.datetime.now() > datetime.timedelta(seconds=10):
-        return HttpResponseBadRequest("Timestamp too old")
+        propagate_to_peers(reg, "peers")
 
-    try:
-        p = Peer.objects.get(
-            Q(domain=reg['domain']) | Q(payout_address=reg['payout_address'])
-        )
-        p.domain = reg['domain']
-        p.payout_address = reg['payout_address']
-        p.save()
-    except Peer.DoesNotExist:
-        Peer.objects.create(
-            domain=reg['domain'],
-            payout_address=reg['payout_address'],
-            first_registered=ts
-        )
+        return HttpResponse("OK")
 
-    pass_on_to_peers(registration=reg)
-
-    return HttpResponse("OK")
-
-def accept_push(request):
+def consensus(request):
     """
     During the consensus process, other nodes will push their ledger hash and
-    this view will accept it.
+    this view will accept it. Also handles ledger hash pulls via GET.
     """
-    claimed_ledger_hash = request.POST['ledger_hash']
-    signature = request.POST['signature']
-    domain = request.POST['domain']
-    peer = Peer.objects.get(domain=domain)
+    if request.POST:
+        # accepting push
+        claimed_ledger_hash = request.POST['ledger_hash']
+        epoch = int(request.POST['epoch'])
+        signature = request.POST['signature']
+        domain = request.POST['domain']
+        peer = Peer.objects.get(domain=domain)
 
-    valid = validate_ledger_hash_push(
-        peer.payout_address, claimed_ledger_hash, domain, signature
-    )
-    if valid:
-        pass
+        try:
+            validate_ledger_hash_push(
+                peer.payout_address, claimed_ledger_hash, domain, signature
+            )
+        except InvalidObject:
+            pass
+        except RejectedObject:
+            pass
 
-    return HttpResponse("OK")
+        ConsensusResult.objects.create(
+            epoch=epoch,
+            domain=domain,
+            claimed_ledger_hash=claimed_ledger_hash
+        )
 
-def return_pull(request):
-    """
-    Some nodes will request my ledger hash during the consensus process.
-    This view returns that ledger hash. Signing this response is not necessary
-    because it is being served via HTTPS.
-    """
-    return JsonResponse({
-        'ledger_hash': get_latest_hash(),
-    })
+        return HttpResponse("OK")
+    else:
+        # returning pull
+        latest = LedgerHash.objects.latest()
+        return JsonResponse({
+            'ledger_hash': latest.ledger_hash,
+            'epoch': latest.epoch
+        })
 
 
 def sync(request):

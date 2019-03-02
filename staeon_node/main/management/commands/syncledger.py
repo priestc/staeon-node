@@ -3,7 +3,7 @@ import requests
 
 import dateutil.parser
 from django.core.management.base import BaseCommand, CommandError
-from staeon.models import Peer, LedgerEntry
+from main.models import Peer, LedgerEntry
 
 def update(response):
     j = response.json()
@@ -21,22 +21,25 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         try:
             last_update = LedgerEntry.objects.latest().last_updated
-        except Peer.DoesNotExist:
+        except LedgerEntry.DoesNotExist:
             last_update = None
 
-        print "Last updated: %s" % (
+        print("Last updated: %s" % (
             "%s (%s ago)" % (
                 last_update, datetime.datetime.now() - last_update
             ) if last_update else "Never"
-        )
+        ))
 
         peers = Peer.objects.all().order_by("?")
         for peer in peers:
             url = "https://%s/staeon/sync?start=%s" % (
-                peer.domain, last_update, page
+                peer.domain, last_update
             )
-            print url
+            print("Trying: %s" % url)
             try:
-                last_update = update(requests.get(url))
-            except:
+                last_update = requests.get(url, timeout=3).json()
+            except (requests.exceptions.ConnectionError, ValueError)as exc:
+                print("fail: %s" % exc)
                 continue # try next node
+
+            update(last_update)

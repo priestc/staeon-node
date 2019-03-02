@@ -18,14 +18,12 @@ class Command(BaseCommand):
             node = Peer.my_node()
             rank = node.rank()
 
-        epoch = get_epoch_number(datetime.datetime.now())
+        epoch = get_epoch_number(datetime.datetime.now()) - 1
 
-        if LedgerHash.object.filter(epoch=epoch).exists():
+        if EpochSummary.object.filter(epoch=epoch).exists():
             raise Exception("Epoch consensus already performed")
 
-        ledger_hash = ValidatedTransaction.ledger_hash(epoch)
-        LedgerHash.objects.create(epoch=epoch, hash=ledger_hash)
-
+        ledger_hash = EpochSummary.close_epoch(epoch)
         peers = list(Peer.objects.all().order_by('reputation', 'first_registered'))
 
         getting_pulled_from = []
@@ -50,18 +48,3 @@ class Command(BaseCommand):
         print "Getting pulled from:", getting_pulled_from
         print "Pushing to:", peers_to_push_to
         print "Getting pushed from:", getting_pushed_to
-
-    def apply_to_ledger(self):
-        for tx in transactions:
-            for input in tx['inputs']:
-                entry = LegderEntry.objects.get(address=input['address'])
-                entry.amount -= input
-                entry.last_updated = ts
-                entry.save()
-
-            for output in tx['outputs']:
-                address, amount = output
-                entry, c = LedgerEntry.objects.get_or_create(address=address)
-                entry.amount += output
-                entry.last_updated = ts
-                entry.save()

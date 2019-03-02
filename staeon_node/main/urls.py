@@ -2,15 +2,16 @@ from django.conf.urls import include, url
 from django.views.generic import TemplateView
 
 from views import (
-    accept_tx, accept_push, return_pull, get_peers, network_summary,
-    rejections
+    accept_tx, consensus, peers, network_summary,
+    rejections, sync
 )
 
 urlpatterns = [
-    url(r'^accept_tx/', accept_tx),
-    url(r'^push/', accept_push),
-    url(r'^pull/', return_pull),
-    url(r'^peerlist/', get_peers),
+    url(r'^transaction/', accept_tx),
+    url(r'^consensus/', consensus),
+    url(r'^peers/', peers),
+    url(r'^rejections/', rejections, name="rejections"),
+
+    url(r'^sync/', sync),
     url(r'^summary/', network_summary, name="summary"),
-    url(r'^rejections/', rejections, name="rejections")
 ]

@@ -112,12 +112,38 @@ class Peer(models.Model):
                 ret['private_key'] = my_pk
         return ret
 
-class LedgerHash(models.Model):
-    hash = models.CharField(max_length=64)
+class EpochSummary(models.Model):
+    ledger_hash = models.CharField(max_length=64)
     epoch = models.IntegerField()
+    transaction_count = models.IntegerField(default=0)
+    propagation_order = models.TextField()
 
     class Meta:
         get_latest_by = 'epoch'
+
+    @classmethod
+    def close_epoch(cls, epoch=None):
+        if not epoch: epoch = get_epoch_number()
+        transactions = ValidatedTransaction.filter_for_epoch(epoch)
+        ledger_hash = hashlib.sha256("".join([
+            tx.txid for tx in transactions
+        ]) + str(epoch)).hexdigest()
+
+        peers = []
+        for i in range(5):
+            peers.append(Peer.shuffle(n=i))
+
+        cls.objects.create(
+            epoch=epoch, ledger_hash=ledger_hash,
+            transaction_count=transactions.count(),
+            propagation_order=" ".join([x.domain for x in peers])
+        )
+        return ledger_hash
+
+    @classmethod
+    def propagation_peers(cls, obj=None, type="transaction"):
+        prop_domains = self.propagation_order.split(" ")
+        propagate_to_peers(prop_domains, obj, type)
 
 class ValidatedTransaction(models.Model):
     txid = models.CharField(max_length=64, primary_key=True)
@@ -156,14 +182,6 @@ class ValidatedTransaction(models.Model):
         return cls.objects.filter(
             timestamp__lte=epoch_end, timestamp__gte=epoch_start,
         ).order_by('txid')
-
-    @classmethod
-    def ledger_hash(cls, epoch=None):
-        if not epoch: epoch = get_epoch_number()
-        transactions = cls.filter_for_epoch(epoch)
-        return hashlib.sha256("".join([
-            tx.txid for tx in transactions
-        ]) + str(epoch)).hexdigest()
 
     @classmethod
     def adjusted_balance(cls, address, epoch=None):
