@@ -18,6 +18,7 @@ class Command(BaseCommand):
             node = Peer.my_node()
             rank = node.rank()
 
+        # close last epoch that just ended
         epoch = get_epoch_number(datetime.datetime.now()) - 1
 
         if EpochSummary.object.filter(epoch=epoch).exists():

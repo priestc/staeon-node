@@ -3,6 +3,7 @@ from __future__ import unicode_literals
 import json
 import dateutil.parser
 
+from django.core.cache import caches
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse, HttpResponseBadRequest
 from django.db.models import Q
@@ -26,7 +27,7 @@ def ledger(address, timestamp):
 
     last_updated = entry.last_updated
     current_balance = entry.amount
-    adjusted = ValidatedTransaction.adjusted_balance(address)
+    adjusted = ValidatedTransaction.adjusted_balance(address, timestamp)
     spend_this_epoch = ValidatedTransaction.last_spend(address)
 
     return (current_balance + adjusted), spend_this_epoch or last_updated

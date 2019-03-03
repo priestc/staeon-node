@@ -1,14 +1,17 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
-import itertools
+
 import os
 import hashlib
-
 import dateutil.parser
+
 from django.db import models
 from django.conf import settings
+from django.core.cache import caches
+
 from staeon.consensus import get_epoch_range, get_epoch_number, deterministic_shuffle
 from staeon.transaction import make_txid
+from staeon.network import PROPAGATION_WINDOW_SECONDS
 
 class LedgerEntry(models.Model):
     address = models.CharField(max_length=35, primary_key=True)
@@ -116,34 +119,51 @@ class EpochSummary(models.Model):
     ledger_hash = models.CharField(max_length=64)
     epoch = models.IntegerField()
     transaction_count = models.IntegerField(default=0)
-    propagation_order = models.TextField()
 
     class Meta:
         get_latest_by = 'epoch'
 
+    def __unicode__(self):
+        return str(self.epoch)
+
     @classmethod
-    def close_epoch(cls, epoch=None):
-        if not epoch: epoch = get_epoch_number()
-        transactions = ValidatedTransaction.filter_for_epoch(epoch)
+    def close_epoch(cls, epoch):
+        transactions = ValidatedTransaction.filter_for_epoch(epoch).order_by('txid')
         ledger_hash = hashlib.sha256("".join([
             tx.txid for tx in transactions
         ]) + str(epoch)).hexdigest()
 
-        peers = []
-        for i in range(5):
-            peers.append(Peer.shuffle(n=i))
-
-        cls.objects.create(
+        es = cls.objects.create(
             epoch=epoch, ledger_hash=ledger_hash,
             transaction_count=transactions.count(),
-            propagation_order=" ".join([x.domain for x in peers])
         )
+
+        es.shuffle_matrix()
         return ledger_hash
+
+    def shuffle_matrix(self):
+        key = "shuffle-matrix-%s" % self.epoch
+        cache = caches['default']
+        matrix = cache.get(key)
+        if matrix:
+            return matrix
+
+        peers = Peer.objects.all()
+        matrix = []
+        sk = lambda x: x.domain
+        for i in range(5):
+            matrix.append(deterministic_shuffle(
+                peers, self.ledger_hash, n=i, sort_key=sk
+            ))
+
+        cache.set(key, matrix)
+        return matrix
 
     @classmethod
     def propagation_peers(cls, obj=None, type="transaction"):
         prop_domains = self.propagation_order.split(" ")
         propagate_to_peers(prop_domains, obj, type)
+
 
 class ValidatedTransaction(models.Model):
     txid = models.CharField(max_length=64, primary_key=True)
@@ -176,17 +196,20 @@ class ValidatedTransaction(models.Model):
         return self.txid[:8]
 
     @classmethod
-    def filter_for_epoch(self, epoch=None):
+    def filter_for_epoch(cls, epoch=None):
         if not epoch: epoch = get_epoch_number()
         epoch_start, epoch_end = get_epoch_range(epoch)
         return cls.objects.filter(
             timestamp__lte=epoch_end, timestamp__gte=epoch_start,
-        ).order_by('txid')
+        )
 
     @classmethod
-    def adjusted_balance(cls, address, epoch=None):
+    def adjusted_balance(cls, address, timestamp, epoch=None):
+        d = timestamp - datetime.timedelta(seconds=PROPAGATION_WINDOW_SECONDS)
         vtx = cls.filter_for_epoch(epoch)
-        records = vtx.objects.filter(validatedmovement__address=address)
+        records = vtx.objects.filter(
+            validatedmovement__address=address, timestamp__lt=d
+        )
 
         total_adjusted = 0
         for record in records:
