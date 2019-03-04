@@ -3,7 +3,6 @@ from __future__ import unicode_literals
 import json
 import dateutil.parser
 
-from django.core.cache import caches
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse, HttpResponseBadRequest
 from django.db.models import Q
@@ -15,7 +14,7 @@ from staeon.peer_registration import validate_peer_registration
 from staeon.transaction import validate_transaction, make_txid
 from staeon.consensus import (
     validate_rejection_authorization, get_epoch_number, get_epoch_range,
-    propagate_to_peers
+    propagate_to_peers, make_transaction_rejection
 )
 from staeon.exceptions import InvalidTransaction, RejectedTransaction
 
@@ -31,6 +30,9 @@ def ledger(address, timestamp):
     spend_this_epoch = ValidatedTransaction.last_spend(address)
 
     return (current_balance + adjusted), spend_this_epoch or last_updated
+
+def propagate_to_assigned_peers(obj, type):
+    return propagate_to_peers(EpochSummary.prop_domains(), obj=obj, type=type)
 
 def send_tx(request):
     return render(request, "send_tx.html")
@@ -49,15 +51,16 @@ def accept_tx(request):
         return HttpResponseBadRequest("Invalid: %s " % exc.display)
     except RejectedTransaction as exc:
         ValidatedTransaction.record(tx, reject=True)
-        propagate_rejection(
+        reject = make_transaction_rejection(
             tx, exc, Peer.my_node().as_dict(pk=True),
             [x.as_dict() for x in Peer.object.all()]
         )
+        propagate_to_assigned_peers(obj=reject, type="rejections")
         return HttpResponseBadRequest("Rejected: %s" % exc.display)
 
     # save to "mempool"
     ValidatedTransaction.record(tx)
-    propagate_to_peers(tx, "transaction")
+    propagate_to_assigned_peers(obj=tx, type="transaction")
 
     return HttpResponse("OK")
 
@@ -79,7 +82,7 @@ def rejections(request):
         tx,c = ValidatedTransaction.objects.get_or_create(txid=txid)
         tx.rejected_reputation_percentile += rejecting_node.rep_percentile()
         tx.save()
-        propagate_to_peers(rejection, "rejections")
+        propagate_to_assigned_peers(rejection, type="rejections")
     else:
         # rendering the rejections page
         if 'epoch' in request.GET:
@@ -110,6 +113,7 @@ def peers(request):
             'peers': peers
         })
     else:
+        # handling new peer registration
         try:
             reg = json.loads(request.POST['registration'])
         except Exception as exc:
@@ -140,7 +144,7 @@ def peers(request):
                 first_registered=ts
             )
 
-        propagate_to_peers(reg, "peers")
+        propagate_to_assigned_peers(reg, "peers")
 
         return HttpResponse("OK")
 

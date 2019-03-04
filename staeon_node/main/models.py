@@ -127,6 +127,20 @@ class EpochSummary(models.Model):
         return str(self.epoch)
 
     @classmethod
+    def prop_domains(cls, epoch=None):
+        """
+        Returns the list of domains that you propagate you based on the shuffled
+        node matrix and your node's current ranking.
+        """
+        if not epoch: epoch = get_epoch_number() - 1
+        cache = caches['default']
+        matrix = cache.get("shuffle-matrix-%s" % epoch)
+        if not matrix:
+            matrix = EpochSummary.objects.get(epoch=epoch).shuffle_matrix()
+        rank = Peer.my_node().rank()
+        return set(x[rank].domain for x in matrix)
+
+    @classmethod
     def close_epoch(cls, epoch):
         transactions = ValidatedTransaction.filter_for_epoch(epoch).order_by('txid')
         ledger_hash = hashlib.sha256("".join([
