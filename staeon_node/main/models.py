@@ -136,7 +136,11 @@ class EpochSummary(models.Model):
         cache = caches['default']
         matrix = cache.get("shuffle-matrix-%s" % epoch)
         if not matrix:
-            matrix = EpochSummary.objects.get(epoch=epoch).shuffle_matrix()
+            try:
+                es = EpochSummary.objects.get(epoch=epoch)
+            except EpochSummary.DoesNotExist:
+                es = EpochSummary.objects.latest()
+            matrix = es.shuffle_matrix()
         rank = Peer.my_node().rank()
         return set(x[rank].domain for x in matrix)
 

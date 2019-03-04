@@ -4,7 +4,7 @@ from __future__ import unicode_literals
 from django.db import models
 from django import forms
 from django.contrib import admin
-from .models import LedgerEntry, Peer, ValidatedTransaction
+from .models import LedgerEntry, Peer, ValidatedTransaction, EpochSummary
 
 class PeerAdmin(admin.ModelAdmin):
     list_display = (
@@ -50,6 +50,12 @@ class ValidatedTransactionAdmin(admin.ModelAdmin):
     readonly_movements.allow_tags = True
     readonly_movements.short_description = "Movements"
 
+class EpochSummaryAdmin(admin.ModelAdmin):
+    list_display = ('epoch', 'transaction_count', 'ledger_hash')
+    ordering = ('-epoch', )
+    readonly_fields = ('epoch', 'transaction_count', 'ledger_hash')
+
 admin.site.register(Peer, PeerAdmin)
 admin.site.register(LedgerEntry, LedgerAdmin)
 admin.site.register(ValidatedTransaction, ValidatedTransactionAdmin)
+admin.site.register(EpochSummary, EpochSummaryAdmin)
