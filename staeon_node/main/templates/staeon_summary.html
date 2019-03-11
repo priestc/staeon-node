@@ -1,8 +1,29 @@
 {% extends "base.html" %}
 
 {% block content %}
+  <style>
+    #node_table {
+      border-collapse: collapse;
+      border: 1px solid black;
+    }
+    #node_table td, #node_table th {
+      border: 1px solid black;
+      padding: 5px;
+    }
+  </style>
   <h2>Staeon Network Summary</h2>
+  Total Units Issued: {{ total_issued }}<br>
+  Current Epoch: {{ epoch }}</br>
+
+  <h3>Peers</h3>
+  <table id="node_table">
+    <tr><th>Node</th><th>Reputation</th><th>Rank</th>
   {% for peer in peers %}
-    <a href="{{ peer.domain }}">{{ peer.domain }}</a> rep {{ peer.reputation }}<br>
+    <tr>
+      <td>{% if peer.mine %}* {% endif%}<a href="http://{{ peer.domain }}">{{ peer.domain }}</a></td>
+      <td>{{ peer.reputation }}</td>
+      <td>{{ peer.rank }}</td>
+    </tr>
   {% endfor %}
+  </table>
 {% endblock %}

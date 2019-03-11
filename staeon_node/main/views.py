@@ -197,5 +197,7 @@ def sync(request):
     })
 
 def network_summary(request):
-    peers = Peer.objects.all()
+    peers = Peer.objects.order_by('-reputation')
+    total_issued = LedgerEntry.total_issued()
+    epoch = get_epoch_number()
     return render(request, "staeon_summary.html", locals())

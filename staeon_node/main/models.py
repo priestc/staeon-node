@@ -4,12 +4,16 @@ from __future__ import unicode_literals
 import os
 import hashlib
 import dateutil.parser
+from collections import defaultdict
 
 from django.db import models
 from django.conf import settings
 from django.core.cache import caches
 
-from staeon.consensus import get_epoch_range, get_epoch_number, deterministic_shuffle
+from staeon.consensus import (
+    make_ledger_hashes, get_epoch_range, get_epoch_number, make_dummy_matrix,
+    make_legit_matrix
+)
 from staeon.transaction import make_txid
 from staeon.network import PROPAGATION_WINDOW_SECONDS
 
@@ -21,6 +25,9 @@ class LedgerEntry(models.Model):
     class Meta:
         get_latest_by = 'last_updated'
 
+    @classmethod
+    def total_issued(cls):
+        return cls.objects.aggregate(s=models.Sum('amount'))['s']
 
 class Peer(models.Model):
     domain = models.TextField(primary_key=True)
@@ -67,6 +74,10 @@ class Peer(models.Model):
         total = self.nodes_ranked_below().aggregate(x=models.Sum('reputation'))['x'] or 0
         total += self.reputation
         return total / self.total_rep() * 100
+
+    def mine(self):
+        my_domain, _ = Peer.my_node_data()
+        return self.domain == my_domain
 
     @classmethod
     def total_rep(cls):
@@ -117,6 +128,7 @@ class Peer(models.Model):
 
 class EpochSummary(models.Model):
     ledger_hash = models.CharField(max_length=64)
+    dummy_hashes = models.TextField()
     epoch = models.IntegerField()
     transaction_count = models.IntegerField(default=0)
 
@@ -134,53 +146,76 @@ class EpochSummary(models.Model):
         """
         if not epoch: epoch = get_epoch_number() - 1
         cache = caches['default']
-        matrix = cache.get("shuffle-matrix-%s" % epoch)
-        if not matrix:
+        key = "prop-domains"
+        domains = cache.get(key)
+        if not domains:
             try:
                 es = EpochSummary.objects.get(epoch=epoch)
             except EpochSummary.DoesNotExist:
                 es = EpochSummary.objects.latest()
-            matrix = es.shuffle_matrix()
-        rank = Peer.my_node().rank()
-        return set(x[rank].domain for x in matrix)
+            domains = [x.domain for x in es.consensus_nodes()['push_legit_to']]
+            cache.set(key, domains)
+        return domains
 
     @classmethod
     def close_epoch(cls, epoch):
-        transactions = ValidatedTransaction.filter_for_epoch(epoch).order_by('txid')
-        ledger_hash = hashlib.sha256("".join([
-            tx.txid for tx in transactions
-        ]) + str(epoch)).hexdigest()
+        if cls.object.filter(epoch=epoch).exists():
+            raise Exception("Epoch %s consensus already performed" % epoch)
 
-        es = cls.objects.create(
-            epoch=epoch, ledger_hash=ledger_hash,
-            transaction_count=transactions.count(),
+        txs = ValidatedTransaction.filter_for_epoch(epoch)
+        ledger_hash, dummies = make_ledger_hashes([x.txid for x in txs], epoch)
+
+        return cls.objects.create(
+            ledger_hash=ledger_hash, dummy_hashes="\n".join(dummies),
+            transaction_count=txs.count(), epoch=epoch,
         )
 
-        es.shuffle_matrix()
-        return ledger_hash
+    def dummy_matrix(self, n=0):
+        return make_dummy_matrix(
+            Peer.objects.all(), self.ledger_hash, sort_key=lambda x: x.domain
+        )
 
-    def shuffle_matrix(self):
-        key = "shuffle-matrix-%s" % self.epoch
+    def legit_matrix(self):
         cache = caches['default']
+        key = "legit-matrix-%s" % self.epoch
         matrix = cache.get(key)
-        if matrix:
-            return matrix
-
-        peers = Peer.objects.all()
-        matrix = []
-        sk = lambda x: x.domain
-        for i in range(5):
-            matrix.append(deterministic_shuffle(
-                peers, self.ledger_hash, n=i, sort_key=sk
-            ))
-
-        cache.set(key, matrix)
+        if not matrix:
+            matrix = make_legit_matrix(
+                Peer.objects.all(), self.ledger_hash, sort_key=lambda x: x.domain
+            )
+            cache.set(key, matrix)
         return matrix
 
-    @classmethod
-    def propagation_peers(cls, obj=None, type="transaction"):
-        prop_domains = self.propagation_order.split(" ")
-        propagate_to_peers(prop_domains, obj, type)
+    def consensus_nodes(self, domain=None):
+        """
+        Gets all the appropriate nodes for the consensus process for the
+        next epoch for a given node domain.
+        """
+        peers = list(Peer.objects.all().order_by('reputation', 'first_registered'))
+        if not domain:
+            node = Peer.my_node()
+        else:
+            node = Peer.objects.get(domain=domain)
+
+        dummy1, dummy2 = self.dummy_matrix()
+        legit_matrix = self.legit_matrix()
+        return {
+            "legit_push_to": set(row[node.rank()] for row in legit_matrix),
+            "legit_pushed_from": set(peers[row.index(node)] for row in legit_matrix),
+            'push_dummy1_to': set(row[node.rank()] for row in dummy1),
+            'push_dummy2_to': set(row[node.rank()] for row in dummy2)
+        }
+
+    def consensus_pushes(self, domain=None):
+        work = self.consensus_nodes(domain=domain)
+        results = defaultdict(list)
+        for node in work['legit_push_to']:
+            results[node.domain].append('legit')
+        for node in work['push_dummy1_to']:
+            results[node.domain].append('dummy1')
+        for node in work['push_dummy2_to']:
+            results[node.domain].append('dummy2')
+        return dict(results)
 
 
 class ValidatedTransaction(models.Model):

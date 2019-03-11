@@ -20,32 +20,14 @@ class Command(BaseCommand):
 
         # close last epoch that just ended
         epoch = get_epoch_number(datetime.datetime.now()) - 1
-
-        if EpochSummary.object.filter(epoch=epoch).exists():
-            raise Exception("Epoch consensus already performed")
-
-        ledger_hash = EpochSummary.close_epoch(epoch)
-        peers = list(Peer.objects.all().order_by('reputation', 'first_registered'))
-
-        getting_pulled_from = []
-        peers_to_pull_from = []
-        for i in range(0, 5):
-            shuffled = Peer.shuffle(peers, ledger_hash, n=i)
-            peers_to_pull_from.append(shuffled[rank])
-            index_of_puller = shuffled.index(node)
-            getting_pulled_from.append(peers[index_of_puller])
-
-        getting_pushed_to = []
-        peers_to_push_to = []
-        for i in range(5, 10):
-            shuffled = Peer.shuffle(peers, ledger_hash, n=i)
-            peers_to_push_to.append(shuffled[rank])
-            index_of_pusher = shuffled.index(node)
-            getting_pushed_to.append(peers[index_of_pusher])
+        es = EpochSummary.close_epoch(epoch)
+        nodes = es.consensus_nodes()
+        print nodes
+        return
 
         print "Epoch: %s" % epoch
         print "Ledger Hash", ledger_hash
-        print "Pulling from:", peers_to_pull_from
+        print "Pulling from:", nodes['legit_push_to']
         print "Getting pulled from:", getting_pulled_from
         print "Pushing to:", peers_to_push_to
         print "Getting pushed from:", getting_pushed_to
