@@ -1,8 +1,6 @@
-import datetime
-
 from django.core.management.base import BaseCommand, CommandError
-from main.models import Peer, LedgerEntry, LedgerHash
-from staeon.consensus import get_epoch_number
+from main.models import Peer, LedgerEntry, EpochSummary
+from staeon.consensus import get_epoch_number, make_ledger_push, propagate_to_peers
 
 class Command(BaseCommand):
     help = 'Starts the consensus process. Called every 10 minutes.'
@@ -16,18 +14,11 @@ class Command(BaseCommand):
             node = Peer.get_by_rank(rank)
         else:
             node = Peer.my_node()
-            rank = node.rank()
 
         # close last epoch that just ended
-        epoch = get_epoch_number(datetime.datetime.now()) - 1
+        epoch = get_epoch_number() - 1
         es = EpochSummary.close_epoch(epoch)
-        nodes = es.consensus_nodes()
-        print nodes
-        return
 
-        print "Epoch: %s" % epoch
-        print "Ledger Hash", ledger_hash
-        print "Pulling from:", nodes['legit_push_to']
-        print "Getting pulled from:", getting_pulled_from
-        print "Pushing to:", peers_to_push_to
-        print "Getting pushed from:", getting_pushed_to
+        for domain, mini_hashes in es.consensus_pushes().items():
+            push = make_ledger_push(epoch, node.domain, node.private_key, mini_hashes)
+            propagate_to_peers([domain], push, "consensus")

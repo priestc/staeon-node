@@ -19,11 +19,11 @@ def make_test_tx(fee=0.01):
     lu = datetime.datetime.now() - datetime.timedelta(hours=1)
 
     LedgerEntry.objects.create(
-        address=spend_addr, amount=seed_value, last_updated=lu
+        address=spend_addr, amount=float("%.8f" % seed_value), last_updated=lu
     )
     return make_transaction(
         [
-            [spend_addr, spend_value, spend_priv]
+            [spend_addr, float("%.8f" % spend_value), spend_priv]
         ],
         [
             [receive_addr, float("%.8f" % (spend_value - fee))]

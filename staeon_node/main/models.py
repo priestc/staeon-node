@@ -159,7 +159,7 @@ class EpochSummary(models.Model):
 
     @classmethod
     def close_epoch(cls, epoch):
-        if cls.object.filter(epoch=epoch).exists():
+        if cls.objects.filter(epoch=epoch).exists():
             raise Exception("Epoch %s consensus already performed" % epoch)
 
         txs = ValidatedTransaction.filter_for_epoch(epoch)
@@ -175,15 +175,22 @@ class EpochSummary(models.Model):
             Peer.objects.all(), self.ledger_hash, sort_key=lambda x: x.domain
         )
 
+    def make_legit_matrix(self):
+        print("making matrix")
+        cache = caches['default']
+        key = "legit-matrix-%s" % self.epoch
+        matrix = make_legit_matrix(
+            Peer.objects.all(), self.ledger_hash, sort_key=lambda x: x.domain
+        )
+        cache.set(key, matrix)
+        return matrix
+
     def legit_matrix(self):
         cache = caches['default']
         key = "legit-matrix-%s" % self.epoch
         matrix = cache.get(key)
         if not matrix:
-            matrix = make_legit_matrix(
-                Peer.objects.all(), self.ledger_hash, sort_key=lambda x: x.domain
-            )
-            cache.set(key, matrix)
+            matrix = self.make_legit_matrix()
         return matrix
 
     def consensus_nodes(self, domain=None):
@@ -209,12 +216,14 @@ class EpochSummary(models.Model):
     def consensus_pushes(self, domain=None):
         work = self.consensus_nodes(domain=domain)
         results = defaultdict(list)
+        dummy1, dummy2 = self.dummy_hashes.split("\n")
+
         for node in work['legit_push_to']:
-            results[node.domain].append('legit')
+            results[node.domain].append(self.ledger_hash[:8])
         for node in work['push_dummy1_to']:
-            results[node.domain].append('dummy1')
+            results[node.domain].append(dummy1[:8])
         for node in work['push_dummy2_to']:
-            results[node.domain].append('dummy2')
+            results[node.domain].append(dummy2[:8])
         return dict(results)
 
 
