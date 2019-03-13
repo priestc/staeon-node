@@ -11,11 +11,15 @@ from django.conf import settings
 from django.core.cache import caches
 
 from staeon.consensus import (
-    make_ledger_hashes, get_epoch_range, get_epoch_number, make_dummy_matrix,
+    make_epoch_hashes, get_epoch_range, get_epoch_number, make_dummy_matrix,
     make_legit_matrix, validate_ledger_push
 )
 from staeon.transaction import make_txid
 from staeon.network import PROPAGATION_WINDOW_SECONDS
+
+def lucky_address(number):
+    index = number % LedgerEntry.objects.count()
+    return LedgerEntry.objects.order_by('-last_updated')[index].address
 
 class LedgerEntry(models.Model):
     address = models.CharField(max_length=35, primary_key=True)
@@ -163,7 +167,9 @@ class EpochSummary(models.Model):
             raise Exception("Epoch %s consensus already performed" % epoch)
 
         txs = ValidatedTransaction.filter_for_epoch(epoch)
-        ledger_hash, dummies = make_ledger_hashes([x.txid for x in txs], epoch)
+        ledger_hash, dummies = make_epoch_hashes(
+            [x.txid for x in txs], epoch, lucky_address
+        )
 
         return cls.objects.create(
             ledger_hash=ledger_hash, dummy_hashes="\n".join(dummies),

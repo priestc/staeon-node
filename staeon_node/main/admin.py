@@ -34,6 +34,7 @@ class ValidatedTransactionAdmin(admin.ModelAdmin):
         'readonly_movements', 'epoch', 'timestamp', 'txid',
         'rejected_reputation_percent', 'fee'
     )
+    ordering = ('-timestamp', )
 
     def column_movements(self, obj):
         movements = ""
