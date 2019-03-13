@@ -12,7 +12,7 @@ from django.core.cache import caches
 
 from staeon.consensus import (
     make_ledger_hashes, get_epoch_range, get_epoch_number, make_dummy_matrix,
-    make_legit_matrix
+    make_legit_matrix, validate_ledger_push
 )
 from staeon.transaction import make_txid
 from staeon.network import PROPAGATION_WINDOW_SECONDS
@@ -226,23 +226,22 @@ class EpochSummary(models.Model):
             results[node.domain].append(dummy2[:8])
         return dict(results)
 
+class ValidatedRejection(models.Model):
+    tx = models.ForeignKey("ValidatedTransaction")
+    peer = models.ForeignKey("Peer")
 
 class ValidatedTransaction(models.Model):
     txid = models.CharField(max_length=64, primary_key=True)
     timestamp = models.DateTimeField()
-    rejected_reputation_percentile = models.FloatField(default=0)
     applied = models.BooleanField(default=False)
 
     @classmethod
     def record(cls, tx, as_reject=False):
-        if not 'txid' in tx: tx['txid'] = make_txid(tx)
+        if 'txid' not in tx: tx['txid'] = make_txid(tx)
 
         obj = cls.objects.create(
             txid=tx['txid'],
-            timestamp=dateutil.parser.parse(tx['timestamp']),
-            rejected_reputation_percentile=(
-                Peer.my_node().rep_percent() if as_reject else 0
-            )
+            timestamp=dateutil.parser.parse(tx['timestamp'])
         )
         for address, amount, sig in tx['inputs']:
             ValidatedMovement.objects.create(
@@ -253,6 +252,9 @@ class ValidatedTransaction(models.Model):
             ValidatedMovement.objects.create(
                 tx=obj, address=address, amount=amount
             )
+
+        if as_reject:
+            ValidatedRejection.objects.create(tx=obj, peer=Peer.my_node())
 
     def __unicode__(self):
         return self.txid[:8]
@@ -281,6 +283,19 @@ class ValidatedTransaction(models.Model):
 
     def epoch(self):
         return get_epoch_number(self.timestamp)
+
+    def rejected_reputation_percent(self):
+        rejects = ValidatedRejection.objects.filter(tx=self)
+        total_percentile = 0
+        for r in rejects:
+            total_percentile += r.peer.rep_percent()
+        return total_percentile
+
+    def fee(self):
+        fee = 0
+        for m in self.validatedmovement_set.all():
+            fee += m.amount * -1
+        return float("%.8f" % fee)
 
     @classmethod
     def apply_to_ledger(cls, epoch):
@@ -315,3 +330,25 @@ class ValidatedMovement(models.Model):
 
     def __unicode__(self):
         return "%s %s" % (self.address[:8], self.disp_amount)
+
+class EpochHash(models.Model):
+    epoch = models.IntegerField()
+    peer = models.ForeignKey(Peer)
+
+    def __unicode__(self):
+        return "%s %s" % (self.peer, self.hash_valid)
+
+    @classmethod
+    def validate_push(cls, peer, epoch, hashes, sig):
+        validate_ledger_push(
+            peer.domain, epoch, obj['hashes'], sig,
+            peer.payout_address
+        )
+        legit_hash = EpochSummary.objects.get(epoch=epoch).ledger_hash
+        for mini_hash in hashes:
+            if legit_hash.startswith(mini_hash):
+                break
+        else:
+            return False # all dummy hashes
+
+        return cls.objects.create(peer=peer, epoch=epoch)

@@ -27,12 +27,12 @@ class LedgerAdmin(admin.ModelAdmin):
 
 class ValidatedTransactionAdmin(admin.ModelAdmin):
     list_display = (
-        'txid', 'epoch', 'timestamp', 'rejected_reputation_percentile',
+        'txid', 'epoch', 'timestamp', 'rejected_reputation_percent',
         'column_movements'
     )
     readonly_fields = (
         'readonly_movements', 'epoch', 'timestamp', 'txid',
-        'rejected_reputation_percentile'
+        'rejected_reputation_percent', 'fee'
     )
 
     def column_movements(self, obj):

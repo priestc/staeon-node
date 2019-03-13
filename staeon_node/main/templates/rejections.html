@@ -2,8 +2,8 @@
 
 {% block content %}
   <h2>Rejected Transactions in Epoch {{ epoch }}</h2>
-  {% for tx in rejections %}
-    {{ tx.txid }} - {{ tx.rejected_reputation_percentile }}<br>
+  {% for tx in rejected %}
+    {{ tx.txid }} - {{ tx.rejected_reputation_percent|floatformat:3 }}%<br>
   {% empty %}
     No rejected transactions this epoch.
   {% endfor %}

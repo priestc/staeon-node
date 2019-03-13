@@ -2,13 +2,15 @@
 from __future__ import unicode_literals
 import json
 import dateutil.parser
+from bitcoin import ecdsa_sign, ecdsa_verify, ecdsa_recover, pubtoaddr
 
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse, HttpResponseBadRequest
 from django.db.models import Q
 
-from .models import LedgerEntry, Peer, ValidatedTransaction
-from bitcoin import ecdsa_sign, ecdsa_verify, ecdsa_recover, pubtoaddr
+from .models import (
+    LedgerEntry, Peer, ValidatedTransaction, ValidatedRejection, EpochHash
+)
 
 from staeon.peer_registration import validate_peer_registration
 from staeon.transaction import validate_transaction, make_txid
@@ -68,7 +70,10 @@ def rejections(request):
     if request.POST:
         domain = request.POST['domain']
         txid = request.POST['txid']
-        rejecting_node = Peer.objects.get(domain=domain)
+        try:
+            node = Peer.objects.get(domain=domain)
+        except Peer.DoesNotExist:
+            return HttpResponseBadRequest("Unregistered peer")
 
         rejection = {
             'domain': domain,
@@ -76,12 +81,12 @@ def rejections(request):
             'signature': request.POST['signature']
         }
         try:
-            validate_rejection_authorization(rejection)
+            validate_rejection_authorization(rejection, node.payout_address)
         except Exception as exc:
-            return HttpResponseBadRequest("Invalid Rejection: %s" % exc.display)
+            return HttpResponseBadRequest("Invalid Rejection: %s" % exc.display())
+
         tx,c = ValidatedTransaction.objects.get_or_create(txid=txid)
-        tx.rejected_reputation_percentile += rejecting_node.rep_percentile()
-        tx.save()
+        ValidatedRejection.objects.create(tx=tx, peer=node)
         propagate_to_assigned_peers(rejection, type="rejections")
     else:
         # rendering the rejections page
@@ -92,12 +97,13 @@ def rejections(request):
 
         epoch_start, epoch_end = get_epoch_range(epoch)
         rejected = ValidatedTransaction.objects.filter(
-            rejected_reputation_percentile__gt=0,
+            validatedrejection__isnull=False,
             timestamp__gt=epoch_start, timestamp__lt=epoch_end
-        )
+        ).distinct()
+        print rejected
         if 'json' in request.GET:
             return JsonResponse({'rejections': [
-                (tx.txid, tx.rejected_reputation_percentile) for tx in rejected
+                (tx.txid, tx.rejected_reputation_percent()) for tx in rejected
             ]})
         return render(request, "rejections.html", locals())
 
@@ -155,31 +161,21 @@ def consensus(request):
     """
     if request.POST:
         # accepting push
-        claimed_ledger_hash = request.POST['ledger_hash']
-        epoch = int(request.POST['epoch'])
-        signature = request.POST['signature']
-        domain = request.POST['domain']
-        peer = Peer.objects.get(domain=domain)
+        obj = json.loads(request.POST['obj'])
+        peer = Peer.objects.get(domain=obj['domain'])
 
         try:
-            validate_ledger_hash_push(
-                peer.payout_address, claimed_ledger_hash, domain, signature
+            EpochHash.validate_push(
+                peer, obj['epoch'], obj['hashes'], obj['signature'],
             )
-        except InvalidObject:
-            pass
-        except RejectedObject:
-            pass
-
-        ConsensusResult.objects.create(
-            epoch=epoch,
-            domain=domain,
-            claimed_ledger_hash=claimed_ledger_hash
-        )
-
+        except InvalidObject as exc:
+            return HttpResponseBadRequest("Rejection Invalid: %s" % exc)
+        except RejectedObject as exc:
+            return HttpResponseBadRequest("Rejection Rejected: %s" % exc)
         return HttpResponse("OK")
     else:
         # returning pull
-        latest = LedgerHash.objects.latest()
+        latest = EpochSummary.objects.latest()
         return JsonResponse({
             'ledger_hash': latest.ledger_hash,
             'epoch': latest.epoch
