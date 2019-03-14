@@ -20,19 +20,6 @@ from staeon.consensus import (
 )
 from staeon.exceptions import InvalidTransaction, RejectedTransaction
 
-def ledger(address, timestamp):
-    try:
-        entry = LedgerEntry.objects.get(address=address)
-    except LegderEntry.DoesNotExist:
-        raise Exception("%s does not exist" % address)
-
-    last_updated = entry.last_updated
-    current_balance = entry.amount
-    adjusted = ValidatedTransaction.adjusted_balance(address, timestamp)
-    spend_this_epoch = ValidatedTransaction.last_spend(address)
-
-    return (current_balance + adjusted), spend_this_epoch or last_updated
-
 def propagate_to_assigned_peers(obj, type):
     return propagate_to_peers(EpochSummary.prop_domains(), obj=obj, type=type)
 
@@ -45,49 +32,27 @@ def accept_tx(request):
     except ValueError:
         return HttpResponseBadRequest("Invalid transaction JSON")
 
-    tx['txid'] = make_txid(tx)
+    if 'txid' not in tx: tx['txid'] = make_txid(tx)
 
     try:
-        validate_transaction(tx)
+        ValidatedTransaction.validate_raw_tx(tx)
     except InvalidTransaction as exc:
-        return HttpResponseBadRequest("Invalid: %s " % exc.display)
-    except RejectedTransaction as exc:
-        ValidatedTransaction.record(tx, reject=True)
-        reject = make_transaction_rejection(
-            tx, exc, Peer.my_node().as_dict(pk=True),
-            [x.as_dict() for x in Peer.object.all()]
-        )
-        propagate_to_assigned_peers(obj=reject, type="rejections")
-        return HttpResponseBadRequest("Rejected: %s" % exc.display)
-
-    # save to "mempool"
-    ValidatedTransaction.record(tx)
-    propagate_to_assigned_peers(obj=tx, type="transaction")
+        return HttpResponseBadRequest("Invalid: %s " % exc.display())
 
     return HttpResponse("OK")
 
 def rejections(request):
     if request.POST:
-        domain = request.POST['domain']
-        txid = request.POST['txid']
         try:
-            node = Peer.objects.get(domain=domain)
+            node = Peer.objects.get(domain=request.POST['domain'])
         except Peer.DoesNotExist:
             return HttpResponseBadRequest("Unregistered peer")
-
-        rejection = {
-            'domain': domain,
-            'txid': txid,
-            'signature': request.POST['signature']
-        }
         try:
-            validate_rejection_authorization(rejection, node.payout_address)
+            ValidatedRejection.validate_rejection_from_peer(
+                peer, request.POST['txid'], request.POST['signature']
+            )
         except Exception as exc:
             return HttpResponseBadRequest("Invalid Rejection: %s" % exc.display())
-
-        tx,c = ValidatedTransaction.objects.get_or_create(txid=txid)
-        ValidatedRejection.objects.create(tx=tx, peer=node)
-        propagate_to_assigned_peers(rejection, type="rejections")
     else:
         # rendering the rejections page
         if 'epoch' in request.GET:
@@ -100,7 +65,7 @@ def rejections(request):
             validatedrejection__isnull=False,
             timestamp__gt=epoch_start, timestamp__lt=epoch_end
         ).distinct()
-        print rejected
+
         if 'json' in request.GET:
             return JsonResponse({'rejections': [
                 (tx.txid, tx.rejected_reputation_percent()) for tx in rejected
@@ -108,15 +73,21 @@ def rejections(request):
         return render(request, "rejections.html", locals())
 
 def peers(request):
-    if request.GET:
-        peers = Peer.objects.all()
-        peers = [x.as_dict() for x in peers]
+    page_size = 5
+    if request.method == 'GET':
+        peers = Peer.objects.order_by("first_registered")
 
         if 'top' in request.GET:
             peers = filter(lambda x: x['percentile'] > 50, peers)
+        elif 'page' in request.GET:
+            page = int(request.GET['page'])
+            print "peers[%s:%s]" % (page_size * (page - 1), page_size * page)
+            peers = peers[page_size * (page - 1):page_size * page]
+        else:
+            peers = peers[:page_size]
 
         return JsonResponse({
-            'peers': peers
+            'peers': [x.as_dict() for x in peers]
         })
     else:
         # handling new peer registration

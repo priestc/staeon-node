@@ -21,6 +21,19 @@ def lucky_address(number):
     index = number % LedgerEntry.objects.count()
     return LedgerEntry.objects.order_by('-last_updated')[index].address
 
+def ledger(address, timestamp):
+    try:
+        entry = LedgerEntry.objects.get(address=address)
+    except LegderEntry.DoesNotExist:
+        raise Exception("%s does not exist" % address)
+
+    last_updated = entry.last_updated
+    current_balance = entry.amount
+    adjusted = ValidatedTransaction.adjusted_balance(address, timestamp)
+    spend_this_epoch = ValidatedTransaction.last_spend(address)
+
+    return (current_balance + adjusted), spend_this_epoch or last_updated
+
 class LedgerEntry(models.Model):
     address = models.CharField(max_length=35, primary_key=True)
     amount = models.FloatField(default=0)
@@ -123,6 +136,7 @@ class Peer(models.Model):
             'percent': self.rep_percent(),
             'percentile': self.rep_percentile(),
             'payout_address': self.payout_address,
+            'first_registered': self.first_registered.isoformat()
         }
         if pk:
             my_domain, my_pk = Peer.my_node_data()
@@ -182,7 +196,6 @@ class EpochSummary(models.Model):
         )
 
     def make_legit_matrix(self):
-        print("making matrix")
         cache = caches['default']
         key = "legit-matrix-%s" % self.epoch
         matrix = make_legit_matrix(
@@ -236,15 +249,41 @@ class ValidatedRejection(models.Model):
     tx = models.ForeignKey("ValidatedTransaction")
     peer = models.ForeignKey("Peer")
 
+    @classmethod
+    def validate_rejection_from_peer(self, peer, txid, signature):
+        validate_rejection_authorization(
+            peer.domain, txid, signature, peer.payout_address
+        )
+        tx,c = ValidatedTransaction.objects.get_or_create(txid=txid)
+        ValidatedRejection.objects.create(tx=tx, peer=node)
+        propagate_to_assigned_peers(rejection, type="rejections")
+
+
 class ValidatedTransaction(models.Model):
     txid = models.CharField(max_length=64, primary_key=True)
     timestamp = models.DateTimeField()
     applied = models.BooleanField(default=False)
 
+    def validate_raw_tx(cls, tx):
+        if ValidatedTransaction.objects.filter(txid=tx['txid']).exists():
+            return
+        try:
+            validate_transaction(tx, ledger=ledger)
+        except RejectedTransaction as exc:
+            reject = make_transaction_rejection(
+                tx, exc, Peer.my_node().as_dict(pk=True),
+                [x.as_dict() for x in Peer.object.all()]
+            )
+            propagate_to_assigned_peers(obj=reject, type="rejections")
+            cls.record(tx, as_reject=True)
+            return
+
+        cls.record(tx)
+        propagate_to_assigned_peers(obj=tx, type="transaction")
+
     @classmethod
     def record(cls, tx, as_reject=False):
         if 'txid' not in tx: tx['txid'] = make_txid(tx)
-
         obj = cls.objects.create(
             txid=tx['txid'],
             timestamp=dateutil.parser.parse(tx['timestamp'])
