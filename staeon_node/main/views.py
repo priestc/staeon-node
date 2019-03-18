@@ -20,9 +20,6 @@ from staeon.consensus import (
 )
 from staeon.exceptions import InvalidTransaction, RejectedTransaction
 
-def propagate_to_assigned_peers(obj, type):
-    return propagate_to_peers(EpochSummary.prop_domains(), obj=obj, type=type)
-
 def send_tx(request):
     return render(request, "send_tx.html")
 
@@ -136,32 +133,42 @@ def consensus(request):
         peer = Peer.objects.get(domain=obj['domain'])
 
         try:
-            EpochHash.validate_push(
+            EpochHash.save_push(
                 peer, obj['epoch'], obj['hashes'], obj['signature'],
             )
         except InvalidObject as exc:
-            return HttpResponseBadRequest("Rejection Invalid: %s" % exc)
+            return HttpResponseBadRequest("Invalid Epoch Hash Push: %s" % exc)
         except RejectedObject as exc:
-            return HttpResponseBadRequest("Rejection Rejected: %s" % exc)
+            return HttpResponseBadRequest("Rejected Epoch Hash Push: %s" % exc)
         return HttpResponse("OK")
     else:
         # returning pull
         latest = EpochSummary.objects.latest()
+        domain = request.GET['domain']
+        
         return JsonResponse({
-            'ledger_hash': latest.ledger_hash,
+            'epoch_hash': latest.epoch_hash,
             'epoch': latest.epoch
         })
 
 
-def sync(request):
-    start = dateutil.parser.parse(request.GET['start'])
-    ledgers = LedgerEntry.objects.filter(last_updated__gt=start).order_by('-last_updated')
-    return JsonResponse({
-        'data': [
-            [x.address, "%.8f" % x.amount, x.last_updated.isoformat()]
-            for x in ledgers[:500]
-        ]
-    })
+def ledger(request):
+    if "sync_start" in request.GET:
+        start = dateutil.parser.parse(request.GET['sync_start'])
+        ledgers = LedgerEntry.objects.filter(last_updated__gt=start).order_by('-last_updated')
+        return JsonResponse({
+            'data': [
+                [x.address, "%.8f" % x.amount, x.last_updated.isoformat()]
+                for x in ledgers[:500]
+            ]
+        })
+    elif 'address' in request.GET:
+        address = request.GET['address']
+        try:
+            balance = LedgerEntry.objects.get(address=address).amount
+        except LedgerEntry.DoesNotExist:
+            return HttpResponse("0")
+        return HttpResponse(str(balance))
 
 def network_summary(request):
     peers = Peer.objects.order_by('-reputation')

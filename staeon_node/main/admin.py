@@ -52,9 +52,9 @@ class ValidatedTransactionAdmin(admin.ModelAdmin):
     readonly_movements.short_description = "Movements"
 
 class EpochSummaryAdmin(admin.ModelAdmin):
-    list_display = ('epoch', 'transaction_count', 'ledger_hash')
+    list_display = ('epoch', 'transaction_count', 'epoch_hash')
     ordering = ('-epoch', )
-    readonly_fields = ('epoch', 'transaction_count', 'ledger_hash')
+    readonly_fields = ('epoch', 'transaction_count', 'epoch_hash')
 
 admin.site.register(Peer, PeerAdmin)
 admin.site.register(LedgerEntry, LedgerAdmin)

@@ -3,7 +3,7 @@ from main.models import Peer, LedgerEntry, EpochSummary
 from staeon.consensus import get_epoch_number, make_ledger_push, propagate_to_peers
 
 class Command(BaseCommand):
-    help = 'Starts the consensus process. Called every 10 minutes.'
+    help = "Starts the consensus process. Called every 10 minutes at the start of each epoch."
 
     def add_arguments(self, parser):
         parser.add_argument('--rank', type=int, help='calculate as rank')

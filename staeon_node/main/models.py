@@ -5,14 +5,15 @@ import os
 import hashlib
 import dateutil.parser
 from collections import defaultdict
+import json
 
 from django.db import models
 from django.conf import settings
 from django.core.cache import caches
 
 from staeon.consensus import (
-    make_epoch_hashes, get_epoch_range, get_epoch_number, make_dummy_matrix,
-    make_legit_matrix, validate_ledger_push
+    make_epoch_hashes, get_epoch_range, get_epoch_number, make_matrix,
+    validate_ledger_push
 )
 from staeon.transaction import make_txid
 from staeon.network import PROPAGATION_WINDOW_SECONDS
@@ -33,6 +34,9 @@ def ledger(address, timestamp):
     spend_this_epoch = ValidatedTransaction.last_spend(address)
 
     return (current_balance + adjusted), spend_this_epoch or last_updated
+
+def propagate_to_assigned_peers(obj, type):
+    return propagate_to_peers(EpochSummary.prop_domains(), obj=obj, type=type)
 
 class LedgerEntry(models.Model):
     address = models.CharField(max_length=35, primary_key=True)
@@ -145,7 +149,7 @@ class Peer(models.Model):
         return ret
 
 class EpochSummary(models.Model):
-    ledger_hash = models.CharField(max_length=64)
+    epoch_hash = models.CharField(max_length=64)
     dummy_hashes = models.TextField()
     epoch = models.IntegerField()
     transaction_count = models.IntegerField(default=0)
@@ -175,44 +179,47 @@ class EpochSummary(models.Model):
             cache.set(key, domains)
         return domains
 
+    def calculate_mini_hashes(self, limit=5):
+        hash = self.epoch_hash
+        mini_hashes = []
+        for x in range(limit):
+            hash = hashlib.sha256(hash).hexdigest()
+            mini_hashes.append(hash[:8])
+        return mini_hashes
+
     @classmethod
     def close_epoch(cls, epoch):
         if cls.objects.filter(epoch=epoch).exists():
             raise Exception("Epoch %s consensus already performed" % epoch)
 
         txs = ValidatedTransaction.filter_for_epoch(epoch)
-        ledger_hash, dummies = make_epoch_hashes(
+        epoch_hash, dummies = make_epoch_hashes(
             [x.txid for x in txs], epoch, lucky_address
         )
 
         return cls.objects.create(
-            ledger_hash=ledger_hash, dummy_hashes="\n".join(dummies),
+            epoch_hash=epoch_hash, dummy_hashes="\n".join(dummies),
             transaction_count=txs.count(), epoch=epoch,
         )
 
-    def dummy_matrix(self, n=0):
-        return make_dummy_matrix(
-            Peer.objects.all(), self.ledger_hash, sort_key=lambda x: x.domain
-        )
-
-    def make_legit_matrix(self):
+    def make_shuffle_matrix(self):
         cache = caches['default']
-        key = "legit-matrix-%s" % self.epoch
-        matrix = make_legit_matrix(
-            Peer.objects.all(), self.ledger_hash, sort_key=lambda x: x.domain
+        key = "matrix-%s" % self.epoch
+        matrix = make_matrix(
+            Peer.objects.all(), self.epoch_hash, sort_key=lambda x: x.domain
         )
         cache.set(key, matrix)
         return matrix
 
-    def legit_matrix(self):
+    def shuffle_matrix(self):
         cache = caches['default']
-        key = "legit-matrix-%s" % self.epoch
+        key = "matrix-%s" % self.epoch
         matrix = cache.get(key)
         if not matrix:
-            matrix = self.make_legit_matrix()
+            matrix = self.make_shuffle_matrix()
         return matrix
 
-    def consensus_nodes(self, domain=None):
+    def consensus_nodes(self, domain=None, matrix_depth=5):
         """
         Gets all the appropriate nodes for the consensus process for the
         next epoch for a given node domain.
@@ -223,27 +230,31 @@ class EpochSummary(models.Model):
         else:
             node = Peer.objects.get(domain=domain)
 
-        dummy1, dummy2 = self.dummy_matrix()
-        legit_matrix = self.legit_matrix()
-        return {
-            "legit_push_to": set(row[node.rank()] for row in legit_matrix),
-            "legit_pushed_from": set(peers[row.index(node)] for row in legit_matrix),
-            'push_dummy1_to': set(row[node.rank()] for row in dummy1),
-            'push_dummy2_to': set(row[node.rank()] for row in dummy2)
-        }
+        pushes = {}
+        matrix = self.shuffle_matrix()
+        for i, column in enumerate(matrix):
+            pushes['minihash%s_push_to' % i] = set(row[node.rank()] for row in column)
+            pushes['minihash%s_pushed_from' % i] = set(peers[row.index(node)] for row in column)
+
+        return pushes
+
+    def peers_pushing_to_me(self, minihash_index=0):
+        """
+        All peers that will push a given hash to me.
+        """
+        return self.consensus_nodes()["minihash%s_pushed_from" % minihash_index]
 
     def consensus_pushes(self, domain=None):
         work = self.consensus_nodes(domain=domain)
         results = defaultdict(list)
-        dummy1, dummy2 = self.dummy_hashes.split("\n")
+        minihashes = self.calculate_mini_hashes()
 
-        for node in work['legit_push_to']:
-            results[node.domain].append(self.ledger_hash[:8])
-        for node in work['push_dummy1_to']:
-            results[node.domain].append(dummy1[:8])
-        for node in work['push_dummy2_to']:
-            results[node.domain].append(dummy2[:8])
+        for minihash_index in range(5):
+            for node in work["minihash%s_push_to" % minihash_index]:
+                results[node.domain].append(minihashes[minihash_index])
+
         return dict(results)
+
 
 class ValidatedRejection(models.Model):
     tx = models.ForeignKey("ValidatedTransaction")
@@ -379,21 +390,43 @@ class ValidatedMovement(models.Model):
 class EpochHash(models.Model):
     epoch = models.IntegerField()
     peer = models.ForeignKey(Peer)
+    hashes = models.TextField()
+    signature = models.CharField(max_length=50)
 
     def __unicode__(self):
-        return "%s %s" % (self.peer, self.hash_valid)
+        return "%s %s" % (self.peer.domain, self.epoch)
 
     @classmethod
-    def validate_push(cls, peer, epoch, hashes, sig):
+    def save_push(cls, peer, epoch, hashes, sig):
         validate_ledger_push(
-            peer.domain, epoch, obj['hashes'], sig,
-            peer.payout_address
+            peer.domain, epoch, hashes, sig, peer.payout_address
         )
-        legit_hash = EpochSummary.objects.get(epoch=epoch).ledger_hash
-        for mini_hash in hashes:
-            if legit_hash.startswith(mini_hash):
-                break
-        else:
-            return False # all dummy hashes
+        return cls.objects.create(
+            peer=peer, epoch=epoch, hashes=json.dumps(hashes),
+            signature=sig
+        )
 
-        return cls.objects.create(peer=peer, epoch=epoch)
+    def is_valid(self):
+        """
+        Returns True if this push is a valid push. Either legit or dummy hash.
+        """
+        es = EpochSummary.objects.get(epoch=epoch)
+
+        for type in ['legit', 'dummy1', 'dummy2', 'dummy3']:
+            if self.peer.rank() in es.ranks_pushing_to_me(type):
+                mini_hash = es.get_mini_hash(type)
+                if es.epoch_hash.startswith(mini_hash):
+                    pass
+
+            for mini_hash in json.loads(self.hashes):
+                return True
+
+        return False
+
+    def as_json(self):
+        return json.dumps({
+            'epoch': self.epoch,
+            'domain': self.peer.domain,
+            'hashes': json.loads(self.hashes),
+            'signature': self.signature,
+        })

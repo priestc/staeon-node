@@ -3,7 +3,7 @@ from django.views.generic import TemplateView
 
 from views import (
     accept_tx, consensus, peers, network_summary,
-    rejections, sync
+    rejections, ledger
 )
 
 urlpatterns = [
@@ -12,6 +12,6 @@ urlpatterns = [
     url(r'^peers/', peers),
     url(r'^rejections/', rejections, name="rejections"),
 
-    url(r'^sync/', sync),
+    url(r'^ledger/', ledger),
     url(r'^summary/', network_summary, name="summary"),
 ]
