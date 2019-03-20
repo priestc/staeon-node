@@ -13,7 +13,7 @@ from django.core.cache import caches
 
 from staeon.consensus import (
     make_epoch_seed, get_epoch_range, get_epoch_number, make_matrix,
-    validate_ledger_push
+    validate_ledger_push, make_mini_hashes
 )
 from staeon.transaction import make_txid
 from staeon.network import PROPAGATION_WINDOW_SECONDS
@@ -178,12 +178,7 @@ class EpochSummary(models.Model):
         return domains
 
     def calculate_mini_hashes(self, limit=5):
-        seed = self.epoch_seed
-        mini_hashes = []
-        for x in range(limit):
-            seed = hashlib.sha256(seed).hexdigest()
-            mini_hashes.append(seed[:8])
-        return mini_hashes
+        return make_mini_hashes(self.epoch_seed, limit)
 
     @classmethod
     def close_epoch(cls, epoch):
@@ -209,7 +204,7 @@ class EpochSummary(models.Model):
         cache = caches['default']
         key = "matrix-%s" % self.epoch
         matrix = make_matrix(
-            Peer.objects.all(), self.epoch_hash, sort_key=lambda x: x.domain
+            Peer.objects.all(), self.epoch_seed, sort_key=lambda x: x.domain
         )
         cache.set(key, matrix)
         return matrix
@@ -254,6 +249,17 @@ class EpochSummary(models.Model):
 
         for minihash_index in range(5):
             for node in work["minihash%s_push_to" % minihash_index]:
+                results[node.domain].append(minihashes[minihash_index])
+
+        return dict(results)
+
+    def consensus_pulls(self, domain=None):
+        work = self.consensus_nodes(domain=domain)
+        results = defaultdict(list)
+        minihashes = self.calculate_mini_hashes()
+
+        for minihash_index in range(5):
+            for node in work["minihash%s_pushed_from" % minihash_index]:
                 results[node.domain].append(minihashes[minihash_index])
 
         return dict(results)
@@ -441,3 +447,25 @@ class EpochHash(models.Model):
             'hashes': json.loads(self.hashes),
             'signature': self.signature,
         })
+
+    @classmethod
+    def validate_pulls_for_epoch(cls, epoch):
+        es = EpochSummary.objects.get(epoch=epoch)
+        pulls_received = cls.objects.filter(epoch=epoch)
+        domains_received = pulls_received.values_list('peer__domain', flat=True)
+
+        not_present = []
+        wrong = []
+        for domain, minihashes in es.consensus_pulls().items():
+            try:
+                pull = pulls_received.get(peer__domain=domain)
+            except cls.DoesNotExist:
+                not_present.append(domain)
+                continue
+
+            for mh in minihashes:
+                if mh not in pull.hashes:
+                    wrong.append(domain)
+                    break
+
+        return not_present, wrong
