@@ -12,15 +12,11 @@ from django.conf import settings
 from django.core.cache import caches
 
 from staeon.consensus import (
-    make_epoch_hashes, get_epoch_range, get_epoch_number, make_matrix,
+    make_epoch_seed, get_epoch_range, get_epoch_number, make_matrix,
     validate_ledger_push
 )
 from staeon.transaction import make_txid
 from staeon.network import PROPAGATION_WINDOW_SECONDS
-
-def lucky_address(number):
-    index = number % LedgerEntry.objects.count()
-    return LedgerEntry.objects.order_by('-last_updated')[index].address
 
 def ledger(address, timestamp):
     try:
@@ -49,6 +45,9 @@ class LedgerEntry(models.Model):
     @classmethod
     def total_issued(cls):
         return cls.objects.aggregate(s=models.Sum('amount'))['s']
+
+    def __unicode__(self):
+        return "%s %s" % (self.address[:8], self.amount)
 
 class Peer(models.Model):
     domain = models.TextField(primary_key=True)
@@ -149,9 +148,8 @@ class Peer(models.Model):
         return ret
 
 class EpochSummary(models.Model):
-    epoch_hash = models.CharField(max_length=64)
-    dummy_hashes = models.TextField()
-    epoch = models.IntegerField()
+    epoch = models.IntegerField(primary_key=True)
+    epoch_seed = models.CharField(max_length=64)
     transaction_count = models.IntegerField(default=0)
 
     class Meta:
@@ -180,11 +178,11 @@ class EpochSummary(models.Model):
         return domains
 
     def calculate_mini_hashes(self, limit=5):
-        hash = self.epoch_hash
+        seed = self.epoch_seed
         mini_hashes = []
         for x in range(limit):
-            hash = hashlib.sha256(hash).hexdigest()
-            mini_hashes.append(hash[:8])
+            seed = hashlib.sha256(seed).hexdigest()
+            mini_hashes.append(seed[:8])
         return mini_hashes
 
     @classmethod
@@ -193,13 +191,18 @@ class EpochSummary(models.Model):
             raise Exception("Epoch %s consensus already performed" % epoch)
 
         txs = ValidatedTransaction.filter_for_epoch(epoch)
-        epoch_hash, dummies = make_epoch_hashes(
-            [x.txid for x in txs], epoch, lucky_address
+        tx_count = txs.count()
+
+        ValidatedTransaction.apply_to_ledger(epoch)
+
+        epoch_seed = make_epoch_seed(
+            tx_count, LedgerEntry.objects.count(),
+            LedgerEntry.objects.order_by('-amount', 'address'),
+            lambda x: x.address
         )
 
         return cls.objects.create(
-            epoch_hash=epoch_hash, dummy_hashes="\n".join(dummies),
-            transaction_count=txs.count(), epoch=epoch,
+            epoch_seed=epoch_seed, transaction_count=tx_count, epoch=epoch
         )
 
     def make_shuffle_matrix(self):
@@ -362,11 +365,19 @@ class ValidatedTransaction(models.Model):
         movements = ValidatedMovement.objects.filter(
             tx__in=cls.filter_for_epoch(epoch)
         )
-        for tx in movements:
-            le, c = LedgerEntry.objects.get_or_create(address=movement.address)
-            le.amount += mobement.amount
-            le.applied = True
-            le.save()
+        for movement in movements:
+            qs = LedgerEntry.objects.filter(address=movement.address)
+            if qs.exists():
+                qs.update(
+                    amount=models.F('amount') + movement.amount,
+                    last_updated=movement.tx.timestamp,
+                )
+            else:
+                LedgerEntry.objects.create(
+                    address=movement.address,
+                    amount=movement.amount,
+                    last_updated=movement.tx.timestamp
+                )
 
 class ValidatedMovement(models.Model):
     """

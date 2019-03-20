@@ -24,6 +24,7 @@ class PeerAdmin(admin.ModelAdmin):
 
 class LedgerAdmin(admin.ModelAdmin):
     list_display = ('address', 'amount', 'last_updated')
+    ordering = ('last_updated', )
 
 class ValidatedTransactionAdmin(admin.ModelAdmin):
     list_display = (
@@ -52,9 +53,9 @@ class ValidatedTransactionAdmin(admin.ModelAdmin):
     readonly_movements.short_description = "Movements"
 
 class EpochSummaryAdmin(admin.ModelAdmin):
-    list_display = ('epoch', 'transaction_count', 'epoch_hash')
+    list_display = ('epoch', 'transaction_count', 'epoch_seed')
     ordering = ('-epoch', )
-    readonly_fields = ('epoch', 'transaction_count', 'epoch_hash')
+    readonly_fields = ('epoch', 'transaction_count', 'epoch_seed')
 
 admin.site.register(Peer, PeerAdmin)
 admin.site.register(LedgerEntry, LedgerAdmin)
