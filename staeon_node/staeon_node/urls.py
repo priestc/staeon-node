@@ -20,5 +20,6 @@ admin.site.site_header = 'Staeon-node Administration'
 
 urlpatterns = [
     url(r'^admin/', admin.site.urls),
-    url(r'^staeon/', include("main.urls"))
+    url(r'^staeon/', include("main.urls")),
+    url(r'^wallet/', include("wallet.urls"))
 ]

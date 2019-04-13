@@ -122,7 +122,14 @@ def peers(request):
 
         return HttpResponse("OK")
 
-def consensus(request):
+def consensus_penalty(request):
+    if request.POST:
+        obj = json.loads(request.POST['obj'])
+        NodePenaltyVote.make_vote(obj)
+
+    return HttpResponse("OK")
+
+def consensus_push(request):
     """
     During the consensus process, other nodes will push their ledger hash and
     this view will accept it. Also handles ledger hash pulls via GET.
@@ -141,15 +148,15 @@ def consensus(request):
         except RejectedObject as exc:
             return HttpResponseBadRequest("Rejected Epoch Hash Push: %s" % exc)
         return HttpResponse("OK")
-    else:
-        # returning pull
-        latest = EpochSummary.objects.latest()
-        domain = request.GET['domain']
-        
-        return JsonResponse({
-            'epoch_hash': latest.epoch_hash,
-            'epoch': latest.epoch
-        })
+    # else:
+    #     # returning pull
+    #     latest = EpochSummary.objects.latest()
+    #     domain = request.GET['domain']
+    #
+    #     return JsonResponse({
+    #         'epoch_hash': latest.epoch_hash,
+    #         'epoch': latest.epoch
+    #     })
 
 
 def ledger(request):

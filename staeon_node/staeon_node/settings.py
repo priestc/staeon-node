@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'django.contrib.messages',
     'django.contrib.staticfiles',
     'main',
+    'wallet',
 ] + (local_settings.DEV_APPS if local_settings else [])
 
 MIDDLEWARE = [
@@ -85,6 +86,9 @@ DATABASES = {
     }
 }
 
+AUTHENTICATION_BACKENDS = [
+    'wallet.custom_auth_backend.ScryptLoginBackend',
+]
 
 # Password validation
 # https://docs.djangoproject.com/en/1.11/ref/settings/#auth-password-validators

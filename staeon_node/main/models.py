@@ -1,6 +1,8 @@
 # -*- coding: utf-8 -*-
 from __future__ import unicode_literals
 
+import datetime
+import random
 import os
 import hashlib
 import dateutil.parser
@@ -13,7 +15,7 @@ from django.core.cache import caches
 
 from staeon.consensus import (
     make_epoch_seed, get_epoch_range, get_epoch_number, make_matrix,
-    validate_ledger_push, make_mini_hashes
+    EpochHashPush, make_mini_hashes
 )
 from staeon.transaction import make_txid
 from staeon.network import PROPAGATION_WINDOW_SECONDS
@@ -152,6 +154,11 @@ class EpochSummary(models.Model):
     epoch_seed = models.CharField(max_length=64)
     transaction_count = models.IntegerField(default=0)
 
+    # statistics
+    count_duration = models.DurationField()
+    apply_duration = models.DurationField()
+    seed_duration = models.DurationField()
+
     class Meta:
         get_latest_by = 'epoch'
 
@@ -185,19 +192,26 @@ class EpochSummary(models.Model):
         if cls.objects.filter(epoch=epoch).exists():
             raise Exception("Epoch %s consensus already performed" % epoch)
 
+        stat_start = datetime.datetime.now()
         txs = ValidatedTransaction.filter_for_epoch(epoch)
         tx_count = txs.count()
+        stat_count_end = datetime.datetime.now()
 
         ValidatedTransaction.apply_to_ledger(epoch)
+        stat_apply_end = datetime.datetime.now()
 
         epoch_seed = make_epoch_seed(
             tx_count, LedgerEntry.objects.count(),
             LedgerEntry.objects.order_by('-amount', 'address'),
             lambda x: x.address
         )
+        stat_epoch_seed_end = datetime.datetime.now()
 
         return cls.objects.create(
-            epoch_seed=epoch_seed, transaction_count=tx_count, epoch=epoch
+            epoch_seed=epoch_seed, transaction_count=tx_count, epoch=epoch,
+            count_duration=(stat_count_end - stat_start),
+            apply_duration=(stat_apply_end - stat_count_end),
+            seed_duration=(stat_epoch_seed_end - stat_apply_end)
         )
 
     def make_shuffle_matrix(self):
@@ -243,6 +257,9 @@ class EpochSummary(models.Model):
         return self.consensus_nodes()["minihash%s_pushed_from" % minihash_index]
 
     def consensus_pushes(self, domain=None):
+        """
+        Constructs the minihash that goes to each domain for the consensus process.
+        """
         work = self.consensus_nodes(domain=domain)
         results = defaultdict(list)
         minihashes = self.calculate_mini_hashes()
@@ -250,8 +267,9 @@ class EpochSummary(models.Model):
         for minihash_index in range(5):
             for node in work["minihash%s_push_to" % minihash_index]:
                 results[node.domain].append(minihashes[minihash_index])
+                random.shuffle(results[node.domain])
 
-        return dict(results)
+        return {key: ''.join(data) for key, data in results.items()}
 
     def consensus_pulls(self, domain=None):
         work = self.consensus_nodes(domain=domain)
@@ -263,7 +281,6 @@ class EpochSummary(models.Model):
                 results[node.domain].append(minihashes[minihash_index])
 
         return dict(results)
-
 
 class ValidatedRejection(models.Model):
     tx = models.ForeignKey("ValidatedTransaction")
@@ -283,6 +300,28 @@ class ValidatedTransaction(models.Model):
     txid = models.CharField(max_length=64, primary_key=True)
     timestamp = models.DateTimeField()
     applied = models.BooleanField(default=False)
+
+    @classmethod
+    def variable_length_short_txid(cls, min_length=0):
+        def get_unique(txid, min_length=0):
+            unique = '' if min_length == 0 else txid[:min_length - 1]
+            for char in txid[min_length-1:]:
+                unique += char
+                if cls.objects.filter(txid__startswith=unique).count() == 1:
+                    return unique
+
+        short_ids = []
+        t0 = datetime.datetime.now()
+        for tx in cls.objects.all():
+            short_ids.append(get_unique(tx.txid, min_length))
+        print("took: %s" % (datetime.datetime.now() - t0))
+
+        total_size = sum(len(x) for x in short_ids)
+        count = len(short_ids)
+
+        print("total transactions: %s" % count)
+        print("avg bytes per tx: %s" % (float(total_size) / count))
+        return short_ids
 
     def validate_raw_tx(cls, tx):
         if ValidatedTransaction.objects.filter(txid=tx['txid']).exists():
@@ -372,13 +411,12 @@ class ValidatedTransaction(models.Model):
             tx__in=cls.filter_for_epoch(epoch)
         )
         for movement in movements:
-            qs = LedgerEntry.objects.filter(address=movement.address)
-            if qs.exists():
-                qs.update(
-                    amount=models.F('amount') + movement.amount,
-                    last_updated=movement.tx.timestamp,
-                )
-            else:
+            try:
+                le = LedgerEntry.objects.get(address=movement.address)
+                le.amount=le.amount + movement.amount
+                le.last_updated=movement.tx.timestamp
+                le.save()
+            except LedgerEntry.DoesNotExist:
                 LedgerEntry.objects.create(
                     address=movement.address,
                     amount=movement.amount,
@@ -414,39 +452,26 @@ class EpochHash(models.Model):
         return "%s %s" % (self.peer.domain, self.epoch)
 
     @classmethod
-    def save_push(cls, peer, epoch, hashes, sig):
-        validate_ledger_push(
-            peer.domain, epoch, hashes, sig, peer.payout_address
-        )
+    def save_push(cls, from_peer, epoch, hashes, sig):
+        my_domain = Peer.my_node_data()[0]
+        EpochHashPush(obj={
+            'from_domain': from_peer.domain, 'epoch': epoch,
+            'hashes': hashes, 'signature': sig, 'to_domain': my_domain
+        }).validate(from_peer.payout_address)
+
         return cls.objects.create(
-            peer=peer, epoch=epoch, hashes=json.dumps(hashes),
+            peer=from_peer, epoch=epoch, hashes=hashes,
             signature=sig
         )
 
-    def is_valid(self):
-        """
-        Returns True if this push is a valid push. Either legit or dummy hash.
-        """
-        es = EpochSummary.objects.get(epoch=epoch)
-
-        for type in ['legit', 'dummy1', 'dummy2', 'dummy3']:
-            if self.peer.rank() in es.ranks_pushing_to_me(type):
-                mini_hash = es.get_mini_hash(type)
-                if es.epoch_hash.startswith(mini_hash):
-                    pass
-
-            for mini_hash in json.loads(self.hashes):
-                return True
-
-        return False
-
-    def as_json(self):
-        return json.dumps({
+    def as_dict(self):
+        return {
             'epoch': self.epoch,
-            'domain': self.peer.domain,
-            'hashes': json.loads(self.hashes),
+            'from_domain': self.peer.domain,
+            'to_domain': Peer.my_node_data()[0],
+            'hashes': self.hashes,
             'signature': self.signature,
-        })
+        }
 
     @classmethod
     def validate_pulls_for_epoch(cls, epoch):
@@ -460,12 +485,48 @@ class EpochHash(models.Model):
             try:
                 pull = pulls_received.get(peer__domain=domain)
             except cls.DoesNotExist:
-                not_present.append(domain)
+                not_present.append([domain, minihashes[0]])
                 continue
 
             for mh in minihashes:
                 if mh not in pull.hashes:
-                    wrong.append(domain)
+                    wrong.append([pull, mh])
                     break
 
         return not_present, wrong
+
+
+class NodePenaltyVote(models.Model):
+    epoch = models.ForeignKey(EpochSummary)
+    penalized_peer = models.ForeignKey(Peer, related_name="penalization_subject")
+    vote_for = models.BooleanField(default=False)
+    voting_peer = models.ForeignKey(Peer, related_name="penalization_vote")
+
+    @classmethod
+    def make_vote(cls, penalty_obj):
+        """
+        penalty_obj is the object that is returned from NodePenaltyVote.make from
+        staeonlib.
+        """
+        correct_hash = penalty['correct_hash']
+        to_domain = penalty_obj['push']['to_domain']
+        from_domain = penalty_obj['push']['from_domain']
+        epoch = penalty_obj['push']['epoch']
+        es = EpochSummary.objects.get(epoch=epoch)
+        pushes = es.consensus_pulls(domain=to_domain)
+
+        accusee = Peer.objects.get(domain=from_domain)
+        accuser = Peer.objects.get(domain=to_domain)
+        penalty = NodePenalization(obj, accuser.payout_address).validate(
+            accusee.payout_address
+        )
+
+        vote_for = (
+            from_domain not in pushes.keys() or
+            correct_hash not in pushes[from_domain]
+        )
+
+        return cls.objects.create(
+            voting_peer=accuser, vote_for=vote_for,
+            penalized_peer=accusee, epoch=epoch
+        )

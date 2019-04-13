@@ -53,9 +53,14 @@ class ValidatedTransactionAdmin(admin.ModelAdmin):
     readonly_movements.short_description = "Movements"
 
 class EpochSummaryAdmin(admin.ModelAdmin):
-    list_display = ('epoch', 'transaction_count', 'epoch_seed')
+    list_display = ('epoch', 'transaction_count', 'epoch_seed', 'speed')
     ordering = ('-epoch', )
-    readonly_fields = ('epoch', 'transaction_count', 'epoch_seed')
+    readonly_fields = ('epoch', 'transaction_count', 'epoch_seed', 'speed')
+
+    def speed(self, obj):
+        return "%.2f tx/sec" % (
+            obj.transaction_count / obj.apply_duration.total_seconds()
+        )
 
 admin.site.register(Peer, PeerAdmin)
 admin.site.register(LedgerEntry, LedgerAdmin)

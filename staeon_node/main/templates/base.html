@@ -1,10 +1,18 @@
+<!DOCTYPE html>
 <html>
-<h1>Staeon</h1>
+{% load staticfiles %}
+
+  <head>
+    <script src="{% static 'jquery-2.2.1.min.js' %}"></script>
+  </head>
   <body>
+    <h1>Staeon</h1>
+
     <table>
       <tr>
         <td><a href="{% url 'summary' %}">Summary</a></td>
         <td><a href="{% url 'rejections' %}">Rejections</a></td>
+        <td><a href="{% url 'wallet' %}">Wallet</a></td>
       </tr>
     </table>
     {% block content %}{% endblock %}

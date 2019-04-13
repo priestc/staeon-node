@@ -1,0 +1,101 @@
+<style>
+    #register_form input {
+        margin: 10px;
+    }
+</style>
+
+<div class="center_box" id="register_box">
+    <form id="register_form" method="post">
+
+        <h3>Register a New Account</h3>
+        Username:<br>
+        <input type="text" name="r_username"><br>
+
+        Email (optional):<br>
+        <input type="email" name="r_email"><br>
+
+        Password:<br>
+        <input type="password" name="r_password"><br>
+
+        Password Again:<br><input type="password" name="r_password2"><br>
+        <input type="hidden" name="encrypted_wallet_seed" id="seed">
+        {% csrf_token %}
+        <br>
+
+        BIP39+BIP44 Mnemonic (optional):<br>
+        <span id="mnemonic_error" class="error"></span>
+        <textarea class="mnemonic" style="width: 80%; height: 4em"></textarea>
+        <br>
+        <div id="register_error" style="color: red"></div>
+        <input type="submit" value="Register">
+
+    </form>
+</div>
+<script>
+$("#register_form").submit(function() {
+    // when the user clicks the register button, generate a wallet seed,
+    // encrypt it with the user's password, then inject it into the registration
+    // form where it will be saved on the back end.
+    event.preventDefault();
+    var t = $(this);
+    raw_mnemonic = t.find("textarea.mnemonic").val();
+
+    if(raw_mnemonic) {
+        if(Mnemonic.isValid(raw_mnemonic)) {
+            var mn = new Mnemonic(raw_mnemonic);
+        } else {
+            $("#mnemonic_error").text("Invalid mnemonic");
+            return false;
+        }
+    } else {
+        var mn = new Mnemonic();
+        raw_mnemonic = mn.phrase;
+    }
+    hd_master_seed = mn.toHDPrivateKey();
+
+    var username = t.find("input[name=r_username]").val();
+    var email = t.find("input[name=r_email]").val();
+    var password = t.find("input[name=r_password]").val();
+    var password2 = t.find("input[name=r_password2]").val();
+
+    if(username.length < 3) {
+        $("#register_error").text("Username must be at least 3 characters.");
+        return
+    }
+
+    if(password.length < 6) {
+        $("#register_error").text("Password must be at least 6 characters.");
+        return
+    }
+
+    make_encrypted_passwords(password, username, function(encrypted_password, mnemonic_password) {
+        if(password == password2) {
+            var encrypted_mnemonic = CryptoJS.AES.encrypt(raw_mnemonic, mnemonic_password);
+        } else {
+            $("#register_error").text("Passwords must match.");
+            return
+        }
+
+        $.ajax({
+            url: "{% url 'register_new_wallet_user' %}",
+            type: 'post',
+            data: {
+                username: username,
+                password: encrypted_password,
+                email: email,
+                csrfmiddlewaretoken: "{{ csrf_token }}",
+                encrypted_mnemonic: encrypted_mnemonic.toString()
+            }
+        }).success(function(response) {
+            // if this ajax returns successfully, then the password is correct.
+            $("#register_box, #login_box, #landing_page").hide();
+            exchange_rates = response.exchange_rates;
+            fill_in_settings(response.wallet_settings);
+            open_wallet(response.wallet_settings.show_wallet_list);
+            $("#register_error").text("");
+        }).fail(function(jqXHR) {
+            $("#register_error").text(jqXHR.responseText);
+        });
+    });
+});
+</script>
