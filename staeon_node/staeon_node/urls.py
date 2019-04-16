@@ -15,11 +15,19 @@ Including another URLconf
 """
 from django.conf.urls import url, include
 from django.contrib import admin
+from django.contrib.auth import logout as dj_logout
+from django import http
+
+def logout(request):
+    dj_logout(request)
+    return http.HttpResponseRedirect("/wallet")
 
 admin.site.site_header = 'Staeon-node Administration'
 
 urlpatterns = [
     url(r'^admin/', admin.site.urls),
     url(r'^staeon/', include("main.urls")),
-    url(r'^wallet/', include("wallet.urls"))
+    url(r'^wallet/', include("wallet.urls")),
+    url(r'^logout/', logout, name="logout"),
+
 ]

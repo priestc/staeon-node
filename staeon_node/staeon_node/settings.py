@@ -87,7 +87,7 @@ DATABASES = {
 }
 
 AUTHENTICATION_BACKENDS = [
-    'wallet.custom_auth_backend.ScryptLoginBackend',
+    'wallet.scrypt_auth_backend.ScryptLoginBackend',
 ]
 
 # Password validation
@@ -127,3 +127,6 @@ USE_TZ = False
 # https://docs.djangoproject.com/en/1.11/howto/static-files/
 
 STATIC_URL = '/static/'
+
+
+LOGIN_TRIES = 5

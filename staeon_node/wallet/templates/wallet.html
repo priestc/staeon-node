@@ -2,12 +2,22 @@
 {% load staticfiles %}
 
 {% block content %}
+<style>
+  #addresses .priv {
+    display: none;
+  }
+  #addresses .balance {
+    color: red;
+    padding-left: 10px;
+  }
+</style>
 <h2>Wallet</h2>
 <script src="{% static 'aes.js' %}"></script>
 <script src="{% static 'altcore-lib.min.js' %}"></script>
 <script src="{% static 'bitcore-mnemonic.min.js' %}"></script>
 <script src="{% static 'bitcore-message.min.js' %}"></script>
 <script src="{% static 'scrypt.js' %}"></script>
+<script src="{% static 'libstaeon.js' %}"></script>
 
 <script>
     //var reddcore = require('reddcore');
@@ -17,12 +27,13 @@
     var hd_master_seed = undefined;
     var raw_mnemonic = undefined;
     var optimal_fees = {};
-    var exchange_rates = {};
-    var utxos = {};
     var show_wallet_list = [];
     var exchange_pairs = {};
     var single_address_cryptos = ['xcp'];
+    var nodes = ['localhost:8000'];
 </script>
+<script src="{% static 'wallet.js' %}"></script>
+
 
 {% include "login.html" %}
 
@@ -31,5 +42,10 @@
   {% include "register.html" %}
   </div>
 {% endif %}
+
+<div id="wallet" style="display: none">
+  <div id="addresses"></div>
+  <div id="total_balance"></div>
+</div>
 
 {% endblock %}

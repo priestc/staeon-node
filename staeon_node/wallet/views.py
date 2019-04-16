@@ -3,27 +3,30 @@ from __future__ import unicode_literals
 import datetime
 
 from django.shortcuts import render
-from django.http import JsonResponse, HttpResponse, HttpResponseBadRequest
+from django import http
 from django.contrib.auth.models import User
+from django.views.decorators.csrf import ensure_csrf_cookie, csrf_exempt
+from django.contrib.auth import authenticate, login as init_login
+from django.conf import settings
 
-from.models import WalletSeed
+from.models import WalletSeed, FailedLogin
 
 def serv_wallet(request):
     return render(request, "wallet.html")
 
 def accept_remote_registration(request):
     if not request.POST:
-        return HttpResponseBadRequest("Post only")
+        return http.HttpResponseBadRequest("Post only")
 
     username = request.POST['username']
     u = User.objects.filter(username=username)
     if u.exists():
-        return HttpResponseBadRequest("Username already exists")
+        return http.HttpResponseBadRequest("Username already exists")
 
     try:
         encrypted_mnemonic = request.POST['encrypted_mnemonic']
     except IndexError:
-        return HttpResponseBadRequest("Encrypted Mnemonic missing.")
+        return http.HttpResponseBadRequest("Encrypted Mnemonic missing.")
 
     encrypted_password = request.POST['encrypted_password']
 
@@ -32,7 +35,7 @@ def accept_remote_registration(request):
     user.encrypted_password = encrypted_password
     user.save()
 
-    return HttpResponse("OK")
+    return http.HttpResponse("OK")
 
 def register_new_wallet_user(request):
     encrypted_mnemonic = request.POST['encrypted_mnemonic']
@@ -55,7 +58,6 @@ def register_new_wallet_user(request):
 
     return http.JsonResponse({
         'wallet_settings': wal.get_settings(),
-        'exchange_rates': get_rates(wal.display_fiat, wal.show_wallet_list),
     })
 
 def login(request):
@@ -80,7 +82,6 @@ def login(request):
             return http.JsonResponse({
                 'encrypted_mnemonic': wal.encrypted_mnemonic,
                 'wallet_settings': wal.get_settings(),
-                'exchange_rates': get_rates(wal.display_fiat, wal.show_wallet_list),
             })
         else:
             FailedLogin.objects.create(username=username)
