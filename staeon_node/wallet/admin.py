@@ -2,5 +2,9 @@
 from __future__ import unicode_literals
 
 from django.contrib import admin
+from .models import WalletSeed
 
-# Register your models here.
+class WalletAdmin(admin.ModelAdmin):
+    pass
+
+admin.site.register(WalletSeed, WalletAdmin)

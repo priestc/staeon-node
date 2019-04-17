@@ -2,30 +2,32 @@ function get_random_node() {
   return nodes[Math.floor(Math.random()*nodes.length)];
 }
 
-function fill_in_balances(){
-  $("#balances").empty();
-  $.each(balances, function(index, item) {
-    if(parseFloat(item[1]) > 0) {
-      var [ad, bal] = item;
-      var id = "bal_" + ad;
-      $("#balances").append(
-        '<div id="' + id + '">' + ad + " " + bal + "</div>"
-      );
-    } else {
-      $("#balances").append(
-        '<div id="' + id + '">' + ad + " " + bal + "</div>"
-      );
-    }
+function fill_in_total_balance() {
+  var accumulated_balances = 0
+  $("#addresses .balance").each(function(i, bal) {
+    accumulated_balances += parseFloat($(bal).text());
   });
+  $("#total_balance").text(accumulated_balances);
 }
 
 function start_up_wallet(settings) {
-  console.log("fill in settings", settings);
+  //console.log("fill in settings!!!!!!!!", settings);
   $("#wallet").show();
 
-  get_all_balances(false, fill_in_balances);
-  get_all_balances(true, fill_in_balances);
-
+  if(settings.deposit_balances) {
+    console.log("deposit from cheats");
+    get_balances_from_cheats(false, settings.deposit_balances, fill_in_total_balance);
+  } else {
+    console.log("deposit from nothing");
+    get_all_balances(false, fill_in_total_balance);
+  }
+  if(settings.change_balances) {
+    console.log("change from cheats");
+    get_balances_from_cheats(true, settings.deposit_balances, fill_in_total_balance);
+  } else {
+    console.log("change from nothing");
+    get_all_balances(true, fill_in_total_balance);
+  }
 }
 
 function derive_addresses(xpriv, change, index) {
@@ -43,67 +45,81 @@ function make_address_tag(change, index) {
   }
 }
 
-function generate_addresses(start, end, change) {
+function put_address(change, index) {
+  var id = make_address_tag(change, index);
   var container = $("#addresses");
-  for(i=start; i<end; i++) {
-    var id = make_address_tag(change, i);
-    if(container.find(id).length > 0) {
-      continue
-    }
-    var [priv, address] = derive_addresses(hd_master_seed, change, i);
+  if(container.find(id).length < 1) {
+    var [priv, address] = derive_addresses(hd_master_seed, change, index);
     container.append(
-      '<div class="input" id="' + id + '"><span class="address">' + address + '</span><span class="priv">' +
-      priv + '</span></div>'
+      '<div class="input" id="' + id + '"><span class="address">' +
+      address + '</span><span class="priv">' + priv + '</span></div>'
     );
   }
+  return id;
 }
 
-function fetch_balance(address_tag, callback) {
+function total_balance_for_tags(tags) {
+  var balance = 0;
+  $.each(tags, function(i, tag) {
+    balance += parseFloat($("#" + tag + " .balance").text());
+  });
+  return balance;
+}
+
+function fetch_balance(address_tag) {
   var node = get_random_node();
   var address = $("#" + address_tag + " .address").text();
   var url = "http://" + node + "/staeon/ledger?address=" + address;
   return $.ajax({
     'url': url,
   }).success(function(response){
-    callback(address_tag, response);
+    var container = $("#" + address_tag);
+    var ele = container.find(".balance");
+    if(ele.length) {
+      ele.text(balance);
+    } else {
+      container.append('<span class="balance">' + response + "</span>");
+    }
     currently_fetching -= 1;
   });
 }
 
 var balances = []
 var currently_fetching = 0;
-function walk_balance(start, end, change) {
+function make_balance_fetches(address_tags) {
   var fetchers = [];
-  for(i=start; i<end; i++) {
-    var address_tag = make_address_tag(change, i);
+  $.each(address_tags, function(i, address_tag) {
     currently_fetching += 1;
-    fetchers.push(fetch_balance(address_tag, function(address_tag, balance){
-      var container = $("#" + address_tag);
-      //console.log("got", address_tag, balance);
-      container.append('<span class="balance">' + balance + "</span>")
-    }));
-  }
+    fetchers.push(fetch_balance(address_tag));
+  });
   return fetchers
 }
 
-function _get_all_balances(start, end, change, callback) {
-  generate_addresses(start, end, change);
-  var fetchers = walk_balance(start, end, change);
+function make_sequential_fetchers(start, stop, change) {
+  var tags = [];
+  for(i=start; i<stop; i++) {
+    tags.push(put_address(change, i));
+  }
+  return [make_balance_fetches(tags), tags];
+}
+
+function perform_fetches(make_fetchers, finished_callback, start, stop) {
+  var [fetchers, tags] = make_fetchers(start, stop);
   $.when.apply(null, fetchers).then(function(){
-    var last_5 = balances.slice(-5).reduce(function(x, y) {
-        return x + parseFloat(y[1]);
-    }, 0)
-    if(last_5 != 0) {
-      // one address had a balance, fetch 5 more
-      _get_all_balances(start + 5, end + 5, change, callback)
+    //console.log("fetches finished, balance is", b);
+    var [this_start, this_stop] = [start + 5, stop + 5];
+    var [more_fetchers, more_tags] = make_fetchers(this_start, this_stop);
+    if(total_balance_for_tags(tags) != 0 & more_fetchers) {
+      // one address had a balance, fetch more
+      perform_fetches(make_fetchers, finished_callback, this_start, this_stop)
     } else {
-      callback();
+      finished_callback();
     }
   });
 }
 
 function get_unused_change_address() {
-  
+
 }
 
 function get_inputs() {
@@ -120,7 +136,19 @@ function get_inputs() {
 }
 
 function get_all_balances(change, callback) {
-  return _get_all_balances(0, 5, change, callback)
+  return perform_fetches(function(start, stop) {
+    return make_sequential_fetchers(start, stop, change);
+  }, callback, 0, 5);
+}
+
+function get_balances_from_cheats(change, cheats, callback) {
+  perform_fetches(function(start, stop) {
+    var tags = [];
+    $.each(cheats.split(",").slice(start, stop), function(i, index) {
+      tags.push(put_address(change, parseInt(index)))
+    })
+    return [make_balance_fetches(tags), tags];
+  }, callback, 0, 5);
 }
 
 function make_transaction(inputs, outputs) {
