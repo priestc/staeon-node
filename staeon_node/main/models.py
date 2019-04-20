@@ -15,10 +15,19 @@ from django.core.cache import caches
 
 from staeon.consensus import (
     make_epoch_seed, get_epoch_range, get_epoch_number, make_matrix,
-    EpochHashPush, make_mini_hashes
+    EpochHashPush, make_mini_hashes, propagate_to_peers
 )
-from staeon.transaction import make_txid
+from staeon.transaction import make_txid, validate_transaction
 from staeon.network import PROPAGATION_WINDOW_SECONDS
+from staeon.exceptions import RejectedObject
+
+def filter_for_epoch(epoch=None, prefix=''):
+    if not epoch: epoch = get_epoch_number()
+    epoch_start, epoch_end = get_epoch_range(epoch)
+    return {
+        '%stimestamp__lte' % prefix: epoch_end,
+        '%stimestamp__gte' % prefix: epoch_start,
+    }
 
 def ledger(address, timestamp):
     try:
@@ -28,10 +37,10 @@ def ledger(address, timestamp):
 
     last_updated = entry.last_updated
     current_balance = entry.amount
-    adjusted = ValidatedTransaction.adjusted_balance(address, timestamp)
-    spend_this_epoch = ValidatedTransaction.last_spend(address)
+    adjusted = ValidatedMovement.adjusted_balance(address, get_epoch_number(timestamp))
+    #spend_this_epoch = ValidatedTransaction.last_spend(address)
 
-    return (current_balance + adjusted), spend_this_epoch or last_updated
+    return (current_balance + adjusted) #, spend_this_epoch or last_updated
 
 def propagate_to_assigned_peers(obj, type):
     return propagate_to_peers(EpochSummary.prop_domains(), obj=obj, type=type)
@@ -180,7 +189,7 @@ class EpochSummary(models.Model):
                 es = EpochSummary.objects.get(epoch=epoch)
             except EpochSummary.DoesNotExist:
                 es = EpochSummary.objects.latest()
-            domains = [x.domain for x in es.consensus_nodes()['push_legit_to']]
+            domains = [x.domain for x in es.consensus_nodes()['minihash1_push_to']]
             cache.set(key, domains)
         return domains
 
@@ -323,12 +332,13 @@ class ValidatedTransaction(models.Model):
         print("avg bytes per tx: %s" % (float(total_size) / count))
         return short_ids
 
+    @classmethod
     def validate_raw_tx(cls, tx):
         if ValidatedTransaction.objects.filter(txid=tx['txid']).exists():
             return
         try:
             validate_transaction(tx, ledger=ledger)
-        except RejectedTransaction as exc:
+        except RejectedObject as exc:
             reject = make_transaction_rejection(
                 tx, exc, Peer.my_node().as_dict(pk=True),
                 [x.as_dict() for x in Peer.object.all()]
@@ -345,7 +355,7 @@ class ValidatedTransaction(models.Model):
         if 'txid' not in tx: tx['txid'] = make_txid(tx)
         obj = cls.objects.create(
             txid=tx['txid'],
-            timestamp=dateutil.parser.parse(tx['timestamp'])
+            timestamp=dateutil.parser.parse(tx['timestamp']).replace(tzinfo=None)
         )
         for address, amount, sig in tx['inputs']:
             ValidatedMovement.objects.create(
@@ -365,25 +375,7 @@ class ValidatedTransaction(models.Model):
 
     @classmethod
     def filter_for_epoch(cls, epoch=None):
-        if not epoch: epoch = get_epoch_number()
-        epoch_start, epoch_end = get_epoch_range(epoch)
-        return cls.objects.filter(
-            timestamp__lte=epoch_end, timestamp__gte=epoch_start,
-        )
-
-    @classmethod
-    def adjusted_balance(cls, address, timestamp, epoch=None):
-        d = timestamp - datetime.timedelta(seconds=PROPAGATION_WINDOW_SECONDS)
-        vtx = cls.filter_for_epoch(epoch)
-        records = vtx.objects.filter(
-            validatedmovement__address=address, timestamp__lt=d
-        )
-
-        total_adjusted = 0
-        for record in records:
-            total_adjusted += record.amount
-
-        return total_adjusted
+        return cls.objects.filter(**filter_for_epoch())
 
     def epoch(self):
         return get_epoch_number(self.timestamp)
@@ -441,6 +433,19 @@ class ValidatedMovement(models.Model):
 
     def __unicode__(self):
         return "%s %s" % (self.address[:8], self.disp_amount)
+
+    @classmethod
+    def adjusted_balance(cls, address, epoch=None):
+        #d = timestamp - datetime.timedelta(seconds=PROPAGATION_WINDOW_SECONDS)
+        movements_this_epoch = cls.objects.filter(
+            address=address,
+            #**filter_for_epoch(epoch=epoch, prefix='tx__')
+        )
+        total_adjusted = 0
+        for record in movements_this_epoch:
+            total_adjusted += record.amount
+
+        return total_adjusted
 
 class EpochHash(models.Model):
     epoch = models.IntegerField()

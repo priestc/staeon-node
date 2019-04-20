@@ -6,10 +6,12 @@ from bitcoin import ecdsa_sign, ecdsa_verify, ecdsa_recover, pubtoaddr
 
 from django.shortcuts import render
 from django.http import JsonResponse, HttpResponse, HttpResponseBadRequest
+from django.views.decorators.csrf import ensure_csrf_cookie, csrf_exempt
 from django.db.models import Q
 
 from .models import (
-    LedgerEntry, Peer, ValidatedTransaction, ValidatedRejection, EpochHash
+    LedgerEntry, Peer, ValidatedTransaction, ValidatedRejection, EpochHash,
+    ValidatedMovement
 )
 
 from staeon.peer_registration import validate_peer_registration
@@ -23,6 +25,7 @@ from staeon.exceptions import InvalidTransaction, RejectedTransaction
 def send_tx(request):
     return render(request, "send_tx.html")
 
+@csrf_exempt
 def accept_tx(request):
     try:
         tx = json.loads(request.POST['tx'])
@@ -174,8 +177,14 @@ def ledger(request):
         try:
             balance = LedgerEntry.objects.get(address=address).amount
         except LedgerEntry.DoesNotExist:
-            return HttpResponse("0")
-        return HttpResponse(str(balance))
+            balance = 0
+
+        adjusted_balance = (
+            balance + ValidatedMovement.adjusted_balance(
+                address, epoch=get_epoch_number()
+            )
+        )
+        return HttpResponse(str(adjusted_balance))
 
 def network_summary(request):
     peers = Peer.objects.order_by('-reputation')

@@ -10,6 +10,15 @@
     color: red;
     padding-left: 10px;
   }
+  #total_balance {
+    font-size: xx-large;
+  }
+  [id^="change"] {
+    display: none;
+  }
+  .invalid {
+    color: red;
+  }
 </style>
 <h2>Wallet</h2>
 <script src="{% static 'aes.js' %}"></script>
@@ -44,8 +53,46 @@
 {% endif %}
 
 <div id="wallet" style="display: none">
-  <div id="addresses"></div>
+  <h3>Total Balance</h3>
   <div id="total_balance"></div>
+  <h3>Addresses</h3>
+  <div id="addresses"></div>
+  <hr>
+  <h3>Send</h3>
+  <div class="output">
+    Address: <input type="text" name="to" class="to_address" value='1KasTZDMZejD5GtHcD9dji9sgfVh5sLJK3'>
+    Amount: <input type="number" step="0.00000001" class="to_amount" value='0.2'>
+    <input type="button" value="Send" id="send_tx">
+  </div>
 </div>
+
+<script>
+$("#send_tx").click(function(event) {
+  event.preventDefault();
+  var outputs = [];
+  $(".output").each(function(i, e){
+    var ele = $(e);
+    var address = ele.find("input.to_address").val();
+    var amount = parseFloat(ele.find("input.to_amount").val());
+    outputs.push([address, amount]);
+  });
+  var change = get_unused_change_address();
+  var tx = make_transaction(undefined, outputs, 0.01, change);
+  pushtx(tx);
+  console.log(JSON.stringify(tx));
+});
+
+$("input.to_address").keyup(function(event){
+  // color address fields to show valid/invalid addresses.
+  var ele = $(this);
+  var address = ele.val();
+  if(bitcore.Address.isValid(address)){
+    ele.removeClass("invalid");
+  } else {
+    ele.addClass('invalid');
+  }
+});
+
+</script>
 
 {% endblock %}
