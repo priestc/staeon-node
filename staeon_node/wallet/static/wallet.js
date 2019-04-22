@@ -10,6 +10,26 @@ function fill_in_total_balance() {
   $("#total_balance").text(accumulated_balances);
 }
 
+function update_balance_cheats(change) {
+  var cheats = [];
+  var which = change ? 'change' : 'deposit';
+  $('#addresses [id^="' + which + '"] .balance').each(function(i, bal) {
+    var b = $(bal);
+    if(parseFloat(b.text()) > 0) {
+      console.log("above zero", b.text());
+      var id = b.parent().attr('id');
+      cheats.push(id.substr(id.indexOf('_') + 1));
+    }
+  });
+  $.ajax({
+    'url': '/wallet/update_settings',
+    'type': 'post',
+    'data': {
+      [which + '_cheats']: cheats.join(",")
+    }
+  })
+}
+
 function start_up_wallet(settings) {
   $("#wallet").show();
 
@@ -98,14 +118,14 @@ function make_sequential_fetchers(start, stop, change) {
   return [make_balance_fetches(tags), tags];
 }
 
-function perform_fetches(make_fetchers, finished_callback, start, stop) {
+function perform_balance_fetches(make_fetchers, finished_callback, start, stop) {
   var [fetchers, tags] = make_fetchers(start, stop);
   $.when.apply(null, fetchers).then(function(){
     var balance = total_balance_for_tags(tags);
     var [this_start, this_stop] = [start + 5, stop + 5];
     var [more_fetchers, more_tags] = make_fetchers(this_start, this_stop, balance);
     if(more_fetchers.length > 0) {
-      perform_fetches(make_fetchers, finished_callback, this_start, this_stop);
+      perform_balance_fetches(make_fetchers, finished_callback, this_start, this_stop);
     } else {
       finished_callback();
     }
@@ -136,8 +156,9 @@ function get_inputs() {
 }
 
 function get_all_balances(change, callback) {
-  return perform_fetches(function(start, stop, balance) {
+  return perform_balance_fetches(function(start, stop, balance) {
     if(balance == 0) {
+      update_balance_cheats(change);
       return [[], null]; // stop fetching
     }
     return make_sequential_fetchers(start, stop, change);
@@ -145,7 +166,7 @@ function get_all_balances(change, callback) {
 }
 
 function get_balances_from_cheats(change, cheats, callback) {
-  perform_fetches(function(start, stop, balance) {
+  perform_balance_fetches(function(start, stop, balance) {
     var tags = [];
     var cheat_ints = cheats.split(",").map(x => parseInt(x));
     var max = Math.max(...cheat_ints);
@@ -153,6 +174,9 @@ function get_balances_from_cheats(change, cheats, callback) {
     $.each(cheat_ints.slice(start, stop), function(i, index) {
       tags.push(put_address(change, index))
     });
+    if(tags.length == 0) {
+      update_balance_cheats(change);
+    }
     return [make_balance_fetches(tags), tags];
   }, callback, 0, 5);
 }

@@ -93,3 +93,16 @@ def login(request):
     return http.JsonResponse({
         "login_timeout": "Try again in %.1f minutes." % minutes_to_wait
     }, status=401)
+
+@csrf_exempt
+def update_settings(request):
+    seed = WalletSeed.objects.get(user=request.user)
+
+    if 'change_cheats' in request.POST:
+        seed.change_balances = request.POST['change_cheats']
+
+    if 'deposit_cheats' in request.POST:
+        seed.change_balances = request.POST['deposit_cheats']
+
+    seed.save()
+    return http.HttpResponse("OK")
